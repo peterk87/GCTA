@@ -1163,6 +1163,11 @@ void option(int option_num, char* option_str[])
             if(thresh_list.size() > 1) {
                 global_heidi_thresh = atof(thresh_list[1].c_str());
                 global_heidi_flag = true;
+            } else if(std_heidi_thresh == 0) {
+                // A single 0 means the user wants HEIDI off; zero the multi-SNP
+                // threshold too so heidi_flag downstream becomes false.
+                global_heidi_thresh = 0;
+                global_heidi_flag = true;
             }
             if(std_heidi_thresh <0 || std_heidi_thresh >1)
                 LOGGER.e(0, "--heidi-thresh, Invalid p-value threshold for single-SNP-based HEIDI-outlier test.");
@@ -1279,8 +1284,16 @@ void option(int option_num, char* option_str[])
         // if(gsmr_so_alg == 0 && !ref_ld_flag && !w_ld_flag) LOGGER.e(0, "Please specify the directory of LD score files to perform the LD score regression analysis.");
         // if(!gsmr_so_flag && !ref_ld_flag && !w_ld_flag) LOGGER.w(0, "The GSMR analysis will be performed assuming no sample overlap between the GWAS data for exposure and outcome.");
     }
-    if(gsmr_beta_version && !global_heidi_flag) {
-        LOGGER.w(0, "The threshold of multi-SNP-based HEIDI-outlier analysis is not specified. The default value is " + to_string(global_heidi_thresh).substr(0,5) + ".");
+    if(gsmr_flag || mtcojo_flag) {
+        bool effective_heidi = CommFunc::FloatNotEqual(abs(global_heidi_thresh) + abs(std_heidi_thresh), 0);
+        if(effective_heidi) {
+            std::stringstream thresh_ss;
+            thresh_ss << std_heidi_thresh;
+            if(gsmr_beta_version) thresh_ss << " " << global_heidi_thresh;
+            LOGGER.i(0, "HEIDI is on, threshold = " + thresh_ss.str() + ".");
+        } else {
+            LOGGER.i(0, "HEIDI is turned off.");
+        }
     }
     if(!gsmr_beta_version && global_heidi_flag) {
         LOGGER.w(0, "--gsmr2-beta is not specified. GCTA will perform single-SNP-based HEIDI-outlier analysis, which was published in Zhu et al. 2018 Nature Communications. The threshold of multi-SNP-based HEIDI-outlier analysis will not be accepted.");

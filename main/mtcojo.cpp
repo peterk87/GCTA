@@ -1594,6 +1594,10 @@ vector<double> gcta::gsmr_meta(vector<string> &snp_instru, eigenVector bzx, eige
 
     vector<int> remain_index(kept_ID);
     bool heidi_flag = CommFunc::FloatNotEqual(abs(global_heidi_thresh) + abs(std_heidi_thresh), 0) ? true : false;
+    if(heidi_flag && n_indices_snp <= 5) {
+        LOGGER.w(0, "Only " + to_string(n_indices_snp) + " IVs clumped and HEIDI is not able to run.");
+        heidi_flag = false;
+    }
 
     // estimate cov(bxy) matrix for HEIDI-outlier
     eigenMatrix cov_bxy_p1(n_indices_snp, n_indices_snp), cov_bxy_p2(n_indices_snp, n_indices_snp);
