@@ -87,5 +87,61 @@ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="cmake/win-toolchain.cma
 cmake --build build/Release
 ```
 
-The executable binary will be generated under `build/Release`.
+The executable binary will be generated under `build/Release`. 
+
+## MCP Server
+
+GCTA provides an MCP (Model Context Protocol) server that exposes all GCTA functionality as tools, allowing AI assistants (Claude, Codex, opencode, etc.) to run GCTA analyses via natural language.
+
+### Quick Start
+
+```bash
+pip3 install mcp                    # install dependency
+python3 gcta-mcp/server.py          # start MCP server
+```
+
+### Configuration
+
+Add the following to your AI tool's MCP configuration, replacing `<GCTA_DIR>` with the full path to the `gcta-1.95.3-linux-x86_64` folder:
+
+```json
+{
+  "mcpServers": {
+    "gcta": {
+      "command": "python3",
+      "args": ["<GCTA_DIR>/gcta-mcp/server.py"]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Function |
+|------|----------|
+| `gcta_run` | Execute GCTA with arbitrary CLI arguments |
+| `gcta_help` | Get GCTA documentation |
+| `gcta_check` | Check GCTA configuration |
+| `gcta_make_grm` | Construct GRM (Genetic Relationship Matrix) |
+| `gcta_reml` | REML analysis (estimate heritability) |
+| `gcta_bivariate_reml` | Bivariate REML (estimate genetic correlation) |
+| `gcta_hereg` | Haseman-Elston regression |
+| `gcta_pca` | Principal component analysis |
+| `gcta_mlma` | Mixed linear model association |
+| `gcta_cojo` | Conditional and joint analysis |
+| `gcta_gsmr` | GSMR Mendelian randomization |
+| `gcta_mtcojo` | Multi-trait COJO analysis |
+| `gcta_fastgwa` | fastGWA genome-wide association |
+| `gcta_fastbat` | fastBAT gene-based test |
+| `gcta_simu_qt` | Simulate quantitative trait |
+| `gcta_simu_cc` | Simulate case-control phenotype |
+| `gcta_fst` | Fst population differentiation |
+| `gcta_make_bed` | Data management (format conversion, filtering) |
+| `gcta_ld_pruning` | LD pruning |
+| `gcta_ld_score` | LD score calculation |
+| `gcta_acat` | ACAT gene-based test |
+| `gcta_list_files` | List files in working directory |
+| `gcta_read_file` | Read file content |
+
+See `gcta-mcp/README.md` for detailed documentation.
 
