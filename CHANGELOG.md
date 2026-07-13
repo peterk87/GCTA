@@ -16,7 +16,13 @@ Git tags were not present upstream at the time this file was created; compare UR
 
 ## [Unreleased]
 
-Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)), based on upstream `v1.95.3`.
+Nothing yet.
+
+---
+
+## [1.96.0] - 2026-07-13
+
+Fork release ([`peterk87/GCTA`](https://github.com/peterk87/GCTA)), based on upstream `v1.95.3`.
 
 ### Added
 
@@ -25,6 +31,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 - GoogleTest unit tests for `CommFunc` / `StrFunc` / `StatFunc` and mirrored COJO inverse-update oracles (`tests/unit/`).
 - GitHub Actions CI (lint, unit tests, MKL build, golden job) under `.github/workflows/`.
 - Mostly-static `gcta64` via `-DGCTA_STATIC_EXE=ON` (static MKL/GSL/libgcc/libstdc++); CI uploads `gcta64-linux-x86_64-static` and comments the download URL on PRs.
+- GitHub Releases on merge to `main` (`github-release-on-main.yml`): tag from `GCTA_VERSION`, notes = CHANGELOG section + GitHub auto-generated notes, assets = stripped+debuglink / `.debug` / UPX binaries.
 - This `CHANGELOG.md`.
 
 ### Changed
@@ -49,6 +56,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 - CI / CTest primary golden gate uses `--tol 1e-6`; exact byte mode kept as `cojo_golden_exact`.
 - CI lint no longer py_compiles gitignored `sandbox/` scripts; golden tests run against the mostly-static `gcta64` artifact (avoids MKL/GSL shared-library version skew between jobs).
 - Golden stdout normalizer masks GCC version (`by GCC X.Y`) so CI (GCC 13) matches goldens blessed on other compilers.
+- Golden stdout normalizer masks `GCTA_VERSION` (`version vX.Y.Z`) so goldens survive release bumps.
 
 ---
 
@@ -832,7 +840,8 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 
 ---
 
-[Unreleased]: https://github.com/peterk87/GCTA/compare/0dc78f0...HEAD
+[Unreleased]: https://github.com/peterk87/GCTA/compare/v1.96.0...HEAD
+[1.96.0]: https://github.com/peterk87/GCTA/compare/0dc78f0...v1.96.0
 [1.95.3]: https://github.com/JianYang-Lab/GCTA/compare/4ee76be...0dc78f0
 [1.95.2]: https://github.com/JianYang-Lab/GCTA/compare/69d42e2...4ee76be
 [1.95.1]: https://github.com/JianYang-Lab/GCTA/compare/3dbff08...69d42e2
