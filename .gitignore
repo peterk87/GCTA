@@ -6,6 +6,9 @@
 !.github/
 !.github/**
 !.opencode/
+!.pre-commit-config.yaml
+!.clang-format
+!.cmake-format.yaml
 compile_commands.json
 *[Bb]uild*/
 *[Rr]elease*/

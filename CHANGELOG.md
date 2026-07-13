@@ -16,7 +16,7 @@ Git tags were not present upstream at the time this file was created; compare UR
 
 ## [Unreleased]
 
-Nothing yet.
+Nothing yet (changes for this cycle land under **1.96.0** until that tag ships).
 
 ---
 
@@ -32,7 +32,20 @@ Fork release ([`peterk87/GCTA`](https://github.com/peterk87/GCTA)), based on ups
 - GitHub Actions CI (lint, unit tests, MKL build, golden job) under `.github/workflows/`.
 - Mostly-static `gcta64` via `-DGCTA_STATIC_EXE=ON` (static MKL/GSL/libgcc/libstdc++); CI uploads `gcta64-linux-x86_64-static` and comments the download URL on PRs.
 - GitHub Releases on merge to `main` (`github-release-on-main.yml`): tag from `GCTA_VERSION`, notes = CHANGELOG section + GitHub auto-generated notes, assets = stripped+debuglink / `.debug` / UPX binaries.
+- Prek / pre-commit config (`.pre-commit-config.yaml`) with clang-format, cmake-format, shellcheck, ruff, and basic file checks; `.clang-format` for first-party C++.
 - This `CHANGELOG.md`.
+
+### Performance
+
+Illustrative COJO timings on a large chromosome (8M panel SNPs, 5k LD-reference samples, >2M GWAS rows after matching, MAF 0.005). Absolute times depend on hardware; the useful numbers are the relative gains versus **upstream GCTA v1.94.1** run with a subsetting approach (`--extract-region-bp`).
+
+| Workload | GCTA v1.94.1 (subsetting) | This release (`1.96.0`) | Approx. Δ |
+|----------|-----------------------------------:|------------------------:|----------:|
+| COJO with subsetting | ~3 h 25 m wall · ~21 GB peak RSS | ~5 min wall | **~40×** faster wall |
+| Full-chromosome `--cojo-slct` (4 threads; load all panel genotypes) | NA (not run) | ~5 min · ~14 GiB | Full-chr becomes practical |
+| Same, deferred genotype load (decode `.ma`∩panel SNPs only) | — | ~3.7 min · ~6.3 GiB | **~2.2×** lower peak RSS vs eager `1.96.0`; joint-SNP set equivalent @ 1e-6 |
+
+The v1.94.1 figure is end-to-end wall for subsetted COJO (including orchestration around subsets). The `1.96.0` LD-block figure uses the same subsetting pattern with the region-scoped I/O and other COJO speedups in this release. Full-chromosome COJO and deferred genotype load are new options here.
 
 ### Changed
 

@@ -1,0 +1,36 @@
+# Reasonable defaults for GCTA first-party C++ (main/, src/, include/, tests/).
+# clang-format only reformats files you stage; third_party/ is excluded from hooks.
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++17
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+# Keep include order stable in a mixed legacy codebase.
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: false
+BinPackParameters: false
+
+# Prefer K&R / LLVM attach braces (opening `{` on the same line).
+BreakBeforeBraces: Attach
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+ContinuationIndentWidth: 4
+
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: Never
+SpacesInParentheses: false

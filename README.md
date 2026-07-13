@@ -79,6 +79,15 @@ For a mostly-static Linux binary (static MKL + GSL + libgcc/libstdc++; glibc/`li
 
 Merges to `main` tag `GCTA_VERSION` from `src/config.h` and publish a GitHub Release (CHANGELOG section + GitHub auto-generated notes) with stripped+`.debug` and UPX assets. Before merging to `main`, bump `GCTA_VERSION` and add a matching `## [X.Y.Z]` section in `CHANGELOG.md` (enforced by `version-gate.yml`).
 
+### Pre-commit (prek)
+
+```sh
+prek install                 # once per clone
+prek run --all-files         # clang-format, cmake-format, shellcheck, ruff, basics
+```
+
+Config: `.pre-commit-config.yaml` + `.clang-format` (first-party `main/` `src/` `include/` `tests/` only; `third_party/` excluded).
+
 On Windows, you should apply a patch for `plink` under `third_party/`, and then use the toolchain file in `cmake/win-toolchain.cmake`:
 
 ``` sh
