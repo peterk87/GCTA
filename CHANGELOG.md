@@ -24,6 +24,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 - Deterministic COJO fixtures under `tests/fixtures/` and blessed goldens under `tests/golden/` (`scripts/ci/make_fixtures.py`).
 - GoogleTest unit tests for `CommFunc` / `StrFunc` / `StatFunc` and mirrored COJO inverse-update oracles (`tests/unit/`).
 - GitHub Actions CI (lint, unit tests, MKL build, golden job) under `.github/workflows/`.
+- Mostly-static `gcta64` via `-DGCTA_STATIC_EXE=ON` (static MKL/GSL/libgcc/libstdc++); CI uploads `gcta64-linux-x86_64-static` and comments the download URL on PRs.
 - This `CHANGELOG.md`.
 
 ### Changed
@@ -46,6 +47,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 - `cojo_snp_dot` cache-disabled fallback no longer rematerializes both genotype vectors every pair.
 - Legacy `option()` path never called `omp_set_num_threads`, so `#pragma omp` in COJO Z fills was a no-op even when `--thread-num` was set.
 - CI / CTest primary golden gate uses `--tol 1e-6`; exact byte mode kept as `cojo_golden_exact`.
+- CI lint no longer py_compiles gitignored `sandbox/` scripts; golden tests run against the mostly-static `gcta64` artifact (avoids MKL/GSL shared-library version skew between jobs).
 
 ---
 

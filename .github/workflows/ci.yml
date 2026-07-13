@@ -31,9 +31,14 @@ jobs:
 
       - name: Check Python scripts compile
         run: |
-          python3 -m py_compile scripts/ci/compare_cojo.py
-          python3 -m py_compile sandbox/2026-07-13-manc-cojo/scripts/compare_cojo.py
-          python3 -m py_compile sandbox/2026-07-13-manc-cojo/scripts/gen_synth_data.py
+          set -euo pipefail
+          # Only scripts that are in the repo (sandbox/ is gitignored).
+          mapfile -t py < <(find scripts/ci -name '*.py' -type f | sort)
+          if [[ ${#py[@]} -eq 0 ]]; then
+            echo "No Python scripts under scripts/ci/"
+            exit 1
+          fi
+          python3 -m py_compile "${py[@]}"
 
   unit:
     name: Unit tests (no MKL)
@@ -130,32 +135,187 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  golden:
-    name: Golden COJO tests
-    needs: build
+  build-static:
+    name: Build static gcta64
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
-
-      - name: Download gcta64
-        uses: actions/download-artifact@v8
         with:
-          name: gcta64-linux-x86_64
-          path: bin
+          submodules: recursive
 
-      - name: Install Intel oneAPI MKL runtime
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgsl-dev gfortran wget ca-certificates gnupg
+
+      - name: Install Intel oneAPI MKL
         run: |
           wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
             | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
           echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
             | sudo tee /etc/apt/sources.list.d/oneAPI.list
           sudo apt-get update
-          sudo apt-get install -y intel-oneapi-mkl
+          sudo apt-get install -y intel-oneapi-mkl-devel
 
-      - name: Run golden harness
+      - name: Cache CPM packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CPM_SOURCE_CACHE }}
+          key: cpm-build-static-${{ runner.os }}-${{ hashFiles('cmake/CPM.cmake', 'CMakeLists.txt') }}
+          restore-keys: |
+            cpm-build-static-${{ runner.os }}-
+            cpm-build-${{ runner.os }}-
+            cpm-unit-${{ runner.os }}-
+
+      - name: Configure static gcta64
         run: |
           # shellcheck source=/dev/null
           source /opt/intel/oneapi/setvars.sh
+          cmake -S . -B build-static -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGCTA_STATIC_EXE=ON \
+            -DGCTA_BUILD_TESTS=OFF \
+            -DMKL_DIR="/opt/intel/oneapi/mkl/latest/lib/cmake/mkl" \
+            -DCPM_SOURCE_CACHE="${CPM_SOURCE_CACHE}"
+
+      - name: Build static gcta64
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          cmake --build build-static --parallel --target gcta64
+
+      - name: Collect binary metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          bin=build-static/gcta64
+          test -x "$bin"
+          file "$bin" | tee binary-file.txt
+          # Prefer a fresh env without intel/setvars so ldd reflects true runtime deps.
+          (env -u LD_LIBRARY_PATH ldd "$bin" || true) | tee binary-ldd.txt
+          sha256sum "$bin" | tee binary-sha256.txt
+          size_bytes=$(stat -c%s "$bin")
+          size_h=$(numfmt --to=iec --suffix=B "$size_bytes")
+          sha=$(cut -d' ' -f1 binary-sha256.txt)
+          {
+            echo "size_bytes=${size_bytes}"
+            echo "size_h=${size_h}"
+            echo "sha256=${sha}"
+          } >> "$GITHUB_OUTPUT"
+          # Sanity: static build should not need libgsl / libmkl shared objects.
+          if env -u LD_LIBRARY_PATH ldd "$bin" 2>/dev/null | grep -E 'libgsl\.|libmkl'; then
+            echo "::error::Static build still links shared GSL/MKL"
+            exit 1
+          fi
+          # Quick smoke without oneAPI env (glibc/libgomp only).
+          "$bin" 2>&1 | head -20 || true
+
+      - name: Package artifact
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp -a build-static/gcta64 dist/gcta64
+          cp binary-file.txt binary-ldd.txt binary-sha256.txt dist/
+          cat > dist/README.txt <<EOF
+          gcta64 (mostly-static Linux x86_64)
+          Built with -DGCTA_STATIC_EXE=ON (static MKL + GSL + libgcc/libstdc++; glibc/libgomp remain dynamic).
+
+          SHA256: ${{ steps.meta.outputs.sha256 }}
+          Size:   ${{ steps.meta.outputs.size_h }} (${{ steps.meta.outputs.size_bytes }} bytes)
+          Commit: ${{ github.sha }}
+          Run:    ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          # Drop leading spaces from the heredoc body above (kept indented for YAML readability).
+          sed -i 's/^          //' dist/README.txt
+
+      - name: Upload static gcta64 artifact
+        id: upload_static
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcta64-linux-x86_64-static
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Comment PR with static binary info
+        if: github.event_name == 'pull_request' && steps.upload_static.outputs.artifact-url != ''
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const artifactUrl = '${{ steps.upload_static.outputs.artifact-url }}';
+            const runUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const sizeH = `${{ steps.meta.outputs.size_h }}`;
+            const sizeB = `${{ steps.meta.outputs.size_bytes }}`;
+            const sha = `${{ steps.meta.outputs.sha256 }}`;
+            const fileInfo = fs.readFileSync('binary-file.txt', 'utf8').trim();
+            const ldd = fs.readFileSync('binary-ldd.txt', 'utf8').trim();
+
+            const marker = '## Static gcta64 binary';
+            let body = `${marker}\n\n`;
+            body += `| | |\n|---|---|\n`;
+            body += `| **Artifact** | [gcta64-linux-x86_64-static](${artifactUrl}) |\n`;
+            body += `| **Size** | ${sizeH} (${sizeB} bytes) |\n`;
+            body += `| **SHA256** | \`${sha}\` |\n`;
+            body += `| **Commit** | \`${{ github.sha }}\` |\n`;
+            body += `| **Workflow** | [run](${runUrl}) |\n\n`;
+            body += `<details><summary><code>file</code></summary>\n\n\`\`\`\n${fileInfo}\n\`\`\`\n\n</details>\n\n`;
+            body += `<details><summary><code>ldd</code> (without Intel env)</summary>\n\n\`\`\`\n${ldd}\n\`\`\`\n\n</details>\n\n`;
+            body += `_Built with \`-DGCTA_STATIC_EXE=ON\` (static MKL+GSL+libgcc/libstdc++; glibc/libgomp remain dynamic). Artifact link requires GitHub auth and may expire._\n`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes(marker)
+            );
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  golden:
+    name: Golden COJO tests
+    # Use the mostly-static binary so golden does not need MKL/GSL .so matching the builder.
+    needs: build-static
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download static gcta64
+        uses: actions/download-artifact@v8
+        with:
+          name: gcta64-linux-x86_64-static
+          path: bin
+
+      - name: Install OpenMP runtime
+        run: |
+          # MKL gnu_thread still needs libgomp even with GCTA_STATIC_EXE.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgomp1
+
+      - name: Run golden harness
+        run: |
           chmod +x bin/gcta64 scripts/ci/golden_test.sh
           # Tolerant numeric compare (rank-1 FP differs at ULP); SNP sets still exact.
           ./scripts/ci/golden_test.sh --gcta "$(pwd)/bin/gcta64" --tests-dir tests --tol 1e-6

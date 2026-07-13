@@ -75,6 +75,8 @@ On MacOS and Linux, use following command to generate the build system:
 cmake -DCMAKE_BUILD_TYPE=Release -DMKL_DIR="<your_mkl_cmake_path>" -G Ninja -B build/Release -S .
 ```
 
+For a mostly-static Linux binary (static MKL + GSL + libgcc/libstdc++; glibc/`libgomp` remain dynamic), add `-DGCTA_STATIC_EXE=ON`. CI uploads that artifact as `gcta64-linux-x86_64-static`.
+
 On Windows, you should apply a patch for `plink` under `third_party/`, and then use the toolchain file in `cmake/win-toolchain.cmake`:
 
 ``` sh
