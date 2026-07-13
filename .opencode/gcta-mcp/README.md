@@ -1,53 +1,53 @@
 # GCTA MCP Server
 
-通过 MCP (Model Context Protocol) 协议，将 GCTA 的所有功能暴露给 AI 工具（Claude、Codex、opencode 等），使用户能够通过自然语言对话调用 GCTA 软件的各种分析功能。
+Expose all GCTA functionality to AI tools (Claude, Codex, opencode, etc.) via the MCP (Model Context Protocol) protocol, enabling users to invoke various GCTA analysis functions through natural language conversations.
 
-## 目录结构
+## Directory Structure
 
 ```
 GCTA/
-├── gcta                  # GCTA 二进制（Linux x86_64, 静态链接）
+├── gcta                  # GCTA binary (Linux x86_64, statically linked)
 ├── gcta-mcp/
-│   ├── server.py         # MCP 服务入口
-│   ├── requirements.txt  # Python 依赖
-│   └── README.md         # 本文档
-├── test.bed / test.bim / test.fam / test.phen  # 示例数据
+│   ├── server.py         # MCP server entry point
+│   ├── requirements.txt  # Python dependencies
+│   └── README.md         # This document
+├── test.bed / test.bim / test.fam / test.phen  # Sample data
 ├── MIT_License.txt
 └── README.txt
 ```
 
-`server.py` 通过自身位置自动定位 `../gcta` 二进制和工作目录，无需任何硬编码路径。
+`server.py` automatically locates the `../gcta` binary and working directory based on its own location, with no hardcoded paths needed.
 
-## 安装
+## Installation
 
-### 1. 安装 Python 依赖
+### 1. Install Python dependencies
 
 ```bash
 pip3 install mcp
 ```
 
-### 2. 赋予二进制可执行权限（如果需要）
+### 2. Make the binary executable (if needed)
 
 ```bash
 chmod +x gcta
 ```
 
-### 3. 验证
+### 3. Verify
 
 ```bash
 cd gcta-mcp
 python3 server.py
 ```
 
-如果看到 "GCTA MCP Server starting..." 消息，说明服务器启动成功。
+If you see the "GCTA MCP Server starting..." message, the server has started successfully.
 
-## 在 AI 工具中配置
+## Configuration in AI Tools
 
-将下方的 `<GCTA_DIR>` 替换为 `GCTA` 文件夹的完整路径。
+Replace `<GCTA_DIR>` below with the full path to the `GCTA` folder.
 
 ### Claude Desktop
 
-编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或对应平台的配置文件：
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or the corresponding config file for your platform:
 
 ```json
 {
@@ -62,7 +62,7 @@ python3 server.py
 
 ### opencode
 
-编辑 `opencode.json`：
+Edit `opencode.json`:
 
 ```json
 {
@@ -78,7 +78,7 @@ python3 server.py
 
 ### Codex (OpenAI)
 
-编辑 `~/.codex/config.json`：
+Edit `~/.codex/config.json`:
 
 ```json
 {
@@ -91,66 +91,66 @@ python3 server.py
 }
 ```
 
-## 环境变量（可选）
+## Environment Variables (Optional)
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `GCTA_BINARY_PATH` | GCTA 二进制文件路径 | `../gcta`（相对于 server.py） |
-| `GCTA_WORK_DIR` | 工作目录（输入/输出文件所在） | server.py 的上级目录 |
-| `GCTA_TIMEOUT` | 执行超时时间（秒） | `3600` |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GCTA_BINARY_PATH` | Path to the GCTA binary | `../gcta` (relative to server.py) |
+| `GCTA_WORK_DIR` | Working directory (where input/output files reside) | Parent directory of server.py |
+| `GCTA_TIMEOUT` | Execution timeout (seconds) | `3600` |
 
-## 工具列表
+## Tool List
 
-本 MCP 服务提供以下 23 个工具，覆盖 GCTA 的全部主要分析功能：
+This MCP service provides 23 tools covering all major GCTA analysis functions:
 
-| 工具 | 功能 |
-|------|------|
-| `gcta_run` | 通用执行（任意命令行参数） |
-| `gcta_help` | 获取 GCTA 文档 |
-| `gcta_check` | 检查 GCTA 配置 |
-| `gcta_make_grm` | 构建 GRM（遗传关系矩阵） |
-| `gcta_reml` | REML 分析（估计方差组分/遗传力） |
-| `gcta_bivariate_reml` | 双变量 REML（估计遗传相关性） |
-| `gcta_hereg` | HE 回归分析 |
-| `gcta_pca` | 主成分分析 |
-| `gcta_mlma` | 混合线性模型关联分析 |
-| `gcta_cojo` | 条件和联合分析 |
-| `gcta_gsmr` | GSMR 孟德尔随机化 |
-| `gcta_mtcojo` | 多性状 COJO 分析 |
-| `gcta_fastgwa` | fastGWA 全基因组关联分析 |
-| `gcta_fastbat` | fastBAT 基因水平关联检验 |
-| `gcta_simu_qt` | 模拟数量性状 |
-| `gcta_simu_cc` | 模拟病例-对照表型 |
-| `gcta_fst` | Fst 群体分化分析 |
-| `gcta_make_bed` | 数据管理（格式转换、过滤） |
-| `gcta_ld_pruning` | LD 剪枝 |
-| `gcta_ld_score` | LD 评分计算 |
-| `gcta_acat` | ACAT 基因水平检验 |
-| `gcta_list_files` | 列出工作目录文件 |
-| `gcta_read_file` | 读取文件内容 |
+| Tool | Function |
+|------|----------|
+| `gcta_run` | Generic execution (arbitrary CLI arguments) |
+| `gcta_help` | Get GCTA documentation |
+| `gcta_check` | Check GCTA configuration |
+| `gcta_make_grm` | Build GRM (Genetic Relationship Matrix) |
+| `gcta_reml` | REML analysis (estimate variance components/heritability) |
+| `gcta_bivariate_reml` | Bivariate REML (estimate genetic correlation) |
+| `gcta_hereg` | HE regression analysis |
+| `gcta_pca` | Principal component analysis |
+| `gcta_mlma` | Mixed linear model association analysis |
+| `gcta_cojo` | Conditional and joint analysis |
+| `gcta_gsmr` | GSMR Mendelian randomization |
+| `gcta_mtcojo` | Multi-trait COJO analysis |
+| `gcta_fastgwa` | fastGWA genome-wide association analysis |
+| `gcta_fastbat` | fastBAT gene-level association test |
+| `gcta_simu_qt` | Simulate quantitative traits |
+| `gcta_simu_cc` | Simulate case-control phenotypes |
+| `gcta_fst` | Fst population differentiation analysis |
+| `gcta_make_bed` | Data management (format conversion, filtering) |
+| `gcta_ld_pruning` | LD pruning |
+| `gcta_ld_score` | LD score calculation |
+| `gcta_acat` | ACAT gene-level test |
+| `gcta_list_files` | List files in working directory |
+| `gcta_read_file` | Read file contents |
 
-## 使用示例
+## Usage Examples
 
-配置完成后，在 AI 工具中可以直接用自然语言请求：
+Once configured, you can use natural language requests in AI tools:
 
-> "使用 test 数据集构建 GRM，输出前缀为 test_grm"
+> "Build a GRM using the test dataset with output prefix test_grm"
 
-AI 会调用 `gcta_make_grm(bfile="test", out="test_grm")`。
+The AI will call `gcta_make_grm(bfile="test", out="test_grm")`.
 
-> "对 test_grm 进行 REML 分析，表型文件为 test.phen"
+> "Perform REML analysis on test_grm with phenotype file test.phen"
 
-AI 会调用 `gcta_reml(grm="test_grm", pheno="test.phen", out="test_reml")`。
+The AI will call `gcta_reml(grm="test_grm", pheno="test.phen", out="test_reml")`.
 
-> "读取 test_reml.hsq 文件的内容"
+> "Read the contents of test_reml.hsq"
 
-AI 会调用 `gcta_read_file(filepath="test_reml.hsq")`。
+The AI will call `gcta_read_file(filepath="test_reml.hsq")`.
 
-## 技术细节
+## Technical Details
 
-- GCTA 二进制为 Linux x86_64 ELF 格式，静态链接（static-pie linked），可在任何 Linux x86_64 系统上直接运行
-- MCP 服务使用 Python `mcp` (FastMCP) 库实现
-- 所有文件路径相对于工作目录（`GCTA_WORK_DIR`，默认为 server.py 的上级目录）
+- The GCTA binary is in Linux x86_64 ELF format, statically linked (static-pie linked), and runs directly on any Linux x86_64 system
+- The MCP service is implemented using the Python `mcp` (FastMCP) library
+- All file paths are relative to the working directory (`GCTA_WORK_DIR`, defaulting to the parent directory of server.py)
 
-## 许可证
+## License
 
-GCTA 软件本身遵循 MIT 许可证。本 MCP 服务可自由使用和分发。
+The GCTA software itself is under the MIT License. This MCP service is free to use and distribute.
