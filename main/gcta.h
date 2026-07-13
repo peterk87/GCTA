@@ -87,7 +87,7 @@ public:
     void extract_single_snp(string snpname);
     void extract_region_snp(string snpname, int wind_size);
     void extract_region_bp(int chr, int bp, int wind_size);
-    // Apply --extract-region-bp during BIM read (M1: avoid loading full-chr indexes).
+    // Apply --extract-region-bp during BIM read so only in-region SNPs are indexed.
     void set_bim_region_filter(int chr, int bp, int wind_bp);
     void exclude_snp(string snplistfile);
     void exclude_single_snp(string snpname);
@@ -375,6 +375,13 @@ private:
     void build_cojo_bp_order();
     void cojo_window_bounds(int snp_include_idx, int &lo, int &hi) const;
     double cojo_snp_dot(int i, int j); // centered LD product / n (uses cache when ready)
+    // Fill one selected-SNP row of dense Z caches (OpenMP over bp window).
+    void fill_z_row_for_selected(int row, int selected_include_idx);
+    void append_z_cache_row(int insert_include_idx, int sorted_pos);
+    void drop_z_cache_row(int erase_pos);
+    // Bit-packed genotypes for COJO dots (keep-subset word packing).
+    void build_cojo_bit_geno();
+    double cojo_snp_dot_bits(int i, int j) const;
     void LD_rval(const vector<int> &indx, eigenMatrix &rval);
     bool massoc_sblup(double lambda, eigenVector &bJ);
     void massoc_slct_output(bool joint_only, vector<int> &slct, eigenVector &bJ, eigenVector &bJ_se, eigenVector &pJ, eigenMatrix &rval);
@@ -637,17 +644,31 @@ private:
     eigenVector _MSX_B;
     eigenSparseMat _B_N;
     eigenSparseMat _B;
-    // Dense inverses of _B / _B_N (M2: maintained by rank-1 updates in insert/erase).
+    // Dense inverses of _B / _B_N (rank-1 updates in insert/erase).
     eigenMatrix _B_N_i;
     eigenMatrix _B_i;
     eigenVector _D_N;
     eigenSparseMat _Z_N;
     eigenSparseMat _Z;
-    // M3: _include indices sorted by bp (same chr assumed within COJO window ops).
+    // Dense selected×include LD caches (source of truth for massoc_cond).
+    eigenMatrix _Z_cache;
+    eigenMatrix _Z_N_cache;
+    bool _Z_cache_ready = false;
+    // _include indices sorted by bp (same chr assumed within COJO window ops).
     vector<int> _bp_order;
-    // M4: optional centered genotype cache for _include (columns); empty if too large.
+    // Optional centered genotype cache for _include (columns); empty if too large.
     eigenMatrix _cojo_X;
     bool _cojo_X_ready = false;
+    // Single-SNP makex hoist when _cojo_X is disabled (outer index of cojo_snp_dot).
+    int _cojo_makex_cache_i = -1;
+    eigenVector _cojo_makex_cache;
+    // Bit-packed dosage planes over _keep (PLINK-style bit1/bit2 + keep mask).
+    vector<vector<uint64_t> > _cojo_bit1;
+    vector<vector<uint64_t> > _cojo_bit2;
+    vector<uint64_t> _cojo_keep_mask;
+    vector<double> _cojo_bit_mu;
+    size_t _cojo_words = 0;
+    bool _cojo_bits_ready = false;
     double g_massoc_out_thresh = -1.0;
     double _diff_freq = 0.2;
     

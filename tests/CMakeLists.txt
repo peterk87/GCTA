@@ -82,7 +82,17 @@ add_test(
     NAME cojo_golden
     COMMAND bash "${GOLDEN_SCRIPT}"
         --gcta "${_gcta_for_golden}"
-        --tests-dir "${GOLDEN_TESTS_DIR}")
+        --tests-dir "${GOLDEN_TESTS_DIR}"
+        --tol 1e-6)
 set_tests_properties(cojo_golden PROPERTIES
     LABELS "golden"
+    WORKING_DIRECTORY "${GCTA_ROOT}")
+# Exact (byte-identical) gate; primary cojo_golden uses --tol for rank-1 FP noise.
+add_test(
+    NAME cojo_golden_exact
+    COMMAND bash "${GOLDEN_SCRIPT}"
+        --gcta "${_gcta_for_golden}"
+        --tests-dir "${GOLDEN_TESTS_DIR}")
+set_tests_properties(cojo_golden_exact PROPERTIES
+    LABELS "golden_exact"
     WORKING_DIRECTORY "${GCTA_ROOT}")

@@ -18,23 +18,27 @@ namespace {
 
 // Rank-1 block-inverse update when appending a row/col to an SPD matrix.
 // R_new = [ R , c ; c' , d ], given R_inv = R^{-1}.
-void inv_update_forward_append(const eigenMatrix &R_inv, const eigenVector &c, double d,
+// Returns false if the Schur complement is non-positive (non-PD / singular).
+bool inv_update_forward_append(const eigenMatrix &R_inv, const eigenVector &c, double d,
                                eigenMatrix &R_inv_out)
 {
     const int k = static_cast<int>(R_inv.rows());
     if (k == 0) {
+        if (!(d > 0.0)) return false;
         R_inv_out.resize(1, 1);
         R_inv_out(0, 0) = 1.0 / d;
-        return;
+        return true;
     }
     eigenVector v = R_inv * c;
     const double denom = d - c.dot(v);
+    if (!(denom > 0.0)) return false;
     const double s = 1.0 / denom;
     R_inv_out.resize(k + 1, k + 1);
     R_inv_out.topLeftCorner(k, k) = R_inv + s * v * v.transpose();
     R_inv_out.topRightCorner(k, 1) = -s * v;
     R_inv_out.bottomLeftCorner(1, k) = -s * v.transpose();
     R_inv_out(k, k) = s;
+    return true;
 }
 
 // Move last row/col to position `pos` (used after append-at-end to match sorted SNP order).
@@ -103,6 +107,11 @@ void gcta::set_diff_freq(double freq_diff){
 void gcta::read_metafile(string metafile, bool GC, double GC_val) {
     double freq_diff_thresh = _diff_freq;
     LOGGER << "\nReading GWAS summary-level statistics from [" + metafile + "] ..." << endl;
+    if (_bim_region_filter) {
+        LOGGER << "BIM region filter active (chr=" << _bim_region_chr
+               << " bp=[" << _bim_region_start << "," << _bim_region_end
+               << "]): matching .ma SNPs to region index only." << endl;
+    }
     ifstream Meta(metafile.c_str());
     if (!Meta) LOGGER.e(0, "cannot open the file [" + metafile + "] to read.");
 
@@ -119,10 +128,45 @@ void gcta::read_metafile(string metafile, bool GC, double GC_val) {
     if (StrFunc::split_string(str_buf, vs_buf) < 7) LOGGER.e(0, "format error in the input file [" + metafile + "].");
     _jma_Vp = 0.0;
     _GC_val = -1;
+    int matched_ma = 0, skipped_ma = 0;
     while (Meta) {
         getline(Meta, str_buf0);
         stringstream iss(str_buf0);
         iss >> snp_buf >> A1_buf >> A2_buf;
+        // With a region-filtered BIM, most .ma lines miss the map — check before allele work.
+        iter = _snp_name_map.find(snp_buf);
+        const bool in_region_index = (iter != _snp_name_map.end());
+        if (_bim_region_filter && !in_region_index) {
+            // Still need Vp from all lines for phenotypic variance median (parity with stock).
+            iss >> str_buf;
+            f_buf = atof(str_buf.c_str());
+            iss >> str_buf;
+            if (str_buf == "NA" || str_buf == ".") { skipped_ma++; continue; }
+            b_buf = atof(str_buf.c_str());
+            iss >> str_buf;
+            if (str_buf == "NA" || str_buf == "." || str_buf == "0") { skipped_ma++; continue; }
+            se_buf = atof(str_buf.c_str());
+            iss >> str_buf;
+            if (str_buf == "NA" || str_buf == ".") { skipped_ma++; continue; }
+            p_buf = atof(str_buf.c_str());
+            iss >> str_buf;
+            if (str_buf == "NA" || str_buf == ".") { skipped_ma++; continue; }
+            N_buf = atof(str_buf.c_str());
+            if (Meta.eof()) break;
+            if (N_buf < 10) LOGGER.e(0, "invalid sample size in line:\n\"" + str_buf0 + "\"");
+            h_buf = 2.0 * f_buf * (1.0 - f_buf);
+            Vp_buf = h_buf * N_buf * se_buf * se_buf + h_buf * b_buf * b_buf * N_buf / (N_buf - 1.0);
+            if (Vp_buf < 0.0) LOGGER.e(0, "in line:\n\"" + str_buf0 + "\"");
+            Vp_v_buf.push_back(Vp_buf);
+            if (GC) {
+                GC_buf = b_buf * b_buf / se_buf / se_buf;
+                if (GC_buf < 0) LOGGER.e(0, "in line:\n\"" + str_buf0 + "\"");
+                GC_v_buf.push_back(GC_buf);
+            }
+            count++;
+            skipped_ma++;
+            continue;
+        }
         StrFunc::to_upper(A1_buf);
         StrFunc::to_upper(A2_buf);
         iss >> str_buf;
@@ -152,7 +196,7 @@ void gcta::read_metafile(string metafile, bool GC, double GC_val) {
             GC_v_buf.push_back(GC_buf);
         }
         count++;
-        if (iter == _snp_name_map.end()) continue;
+        if (iter == _snp_name_map.end()) { skipped_ma++; continue; }
         i = iter->second;
         if (A1_buf != _allele1[i] && A1_buf != _allele2[i]) {
             bad_snp.push_back(_snp_name[i]);
@@ -169,9 +213,13 @@ void gcta::read_metafile(string metafile, bool GC, double GC_val) {
         beta_se_buf.push_back(se_buf);
         pval_buf.push_back(p_buf);
         N_o_buf.push_back(N_buf);
+        matched_ma++;
     }
     Meta.close();
     LOGGER << "GWAS summary statistics of " << count << " SNPs read from [" + metafile + "]." << endl;
+    if (_bim_region_filter) {
+        LOGGER << "MA region match: " << matched_ma << " in index, " << skipped_ma << " outside/unmatched." << endl;
+    }
     _jma_Vp = CommFunc::median(Vp_v_buf);
     LOGGER << "Phenotypic variance estimated from summary statistics of all " << count << " SNPs: " << _jma_Vp << " (variance of logit for case-control studies)." << endl;
     if (GC) {
@@ -287,11 +335,19 @@ void gcta::init_massoc(string metafile, bool GC, double GC_val)
 
     if (_mu.empty()) calcu_mu();
 
-    // M4: cache centered genotypes for COJO LD when footprint is modest (post-M1 regions).
+    // Cache centered genotypes for COJO LD when the footprint is modest (~320MB cap).
+    // Under N-way parallel fan-out, total RAM scales with the number of processes.
     const size_t cells = static_cast<size_t>(n) * static_cast<size_t>(m);
     const size_t max_cells = 40ull << 20; // ~40M doubles ≈ 320MB
     _cojo_X_ready = false;
     _cojo_X.resize(0, 0);
+    _cojo_makex_cache_i = -1;
+    _cojo_makex_cache.resize(0);
+    _Z_cache_ready = false;
+    _Z_cache.resize(0, 0);
+    _Z_N_cache.resize(0, 0);
+    _Z.resize(0, 0);
+    _Z_N.resize(0, 0);
     if (cells > 0 && cells <= max_cells) {
         _cojo_X.resize(n, m);
         _cojo_X_ready = true;
@@ -307,6 +363,8 @@ void gcta::init_massoc(string metafile, bool GC, double GC_val)
     if (_cojo_X_ready) {
         LOGGER << "COJO genotype cache enabled (" << m << " SNPs × " << n << " individuals)." << endl;
     }
+    // Bit-packed keep-subset planes (primary LD kernel when float cache is off).
+    build_cojo_bit_geno();
     if (_jma_actual_geno) {
         _MSX = _MSX_B;
         _Nd = _N_o;
@@ -317,16 +375,112 @@ void gcta::init_massoc(string metafile, bool GC, double GC_val)
     build_cojo_bp_order();
 }
 
+void gcta::build_cojo_bit_geno()
+{
+    _cojo_bits_ready = false;
+    _cojo_bit1.clear();
+    _cojo_bit2.clear();
+    _cojo_keep_mask.clear();
+    _cojo_bit_mu.clear();
+    _cojo_words = 0;
+    const int n = static_cast<int>(_keep.size());
+    const int m = static_cast<int>(_include.size());
+    if (n < 1 || m < 1) return;
+
+    _cojo_words = static_cast<size_t>((n + 63) / 64);
+    _cojo_keep_mask.assign(_cojo_words, ~0ULL);
+    if (n % 64 != 0) {
+        _cojo_keep_mask.back() = (n % 64 == 0) ? ~0ULL : ((1ULL << (n % 64)) - 1ULL);
+    }
+    _cojo_bit1.resize(m);
+    _cojo_bit2.resize(m);
+    _cojo_bit_mu.resize(m);
+
+    #pragma omp parallel for
+    for (int j = 0; j < m; j++) {
+        _cojo_bit1[j].assign(_cojo_words, 0ULL);
+        _cojo_bit2[j].assign(_cojo_words, 0ULL);
+        const int snp = _include[j];
+        const double mu = _mu[snp];
+        _cojo_bit_mu[j] = mu;
+        const bool ref_is_a1 = (_allele1[snp] == _ref_A[snp]);
+        for (int i = 0; i < n; i++) {
+            const int indi = _keep[i];
+            const bool s1 = _snp_1[snp][indi];
+            const bool s2 = _snp_2[snp][indi];
+            const bool missing = (s1 && !s2);
+            const size_t w = static_cast<size_t>(i >> 6);
+            const uint64_t bit = 1ULL << (i & 63);
+            if (missing) {
+                // Missing: leave bit1=0,bit2=0 here; handled via (~bit1|bit2) valid mask in dots.
+                // Encode as bit1=1,bit2=0 to match PLINK missing so valid-mask excludes them.
+                _cojo_bit1[j][w] |= bit;
+            } else {
+                // Dosage 0/1/2 in allele1 count, then flip if ref is allele2.
+                int dose = (int)s1 + (int)s2;
+                if (!ref_is_a1) dose = 2 - dose;
+                // Store as: dose 2 → bit1=1,bit2=1; dose 1 → bit1=0,bit2=1; dose 0 → bit1=0,bit2=0
+                if (dose >= 2) {
+                    _cojo_bit1[j][w] |= bit;
+                    _cojo_bit2[j][w] |= bit;
+                } else if (dose == 1) {
+                    _cojo_bit2[j][w] |= bit;
+                }
+            }
+        }
+    }
+    _cojo_bits_ready = true;
+    LOGGER << "COJO bit-packed genotypes enabled (" << m << " SNPs × " << n << " individuals, "
+           << _cojo_words << " words/SNP)." << endl;
+}
+
+double gcta::cojo_snp_dot_bits(int i, int j) const
+{
+    const int n = static_cast<int>(_keep.size());
+    const double mu_i = _cojo_bit_mu[i];
+    const double mu_j = _cojo_bit_mu[j];
+    int N_both = 0, S12 = 0, S1 = 0, S2 = 0;
+    for (size_t w = 0; w < _cojo_words; w++) {
+        const uint64_t mask = _cojo_keep_mask[w];
+        if (mask == 0ULL) continue;
+        uint64_t x11 = _cojo_bit1[i][w], x12 = _cojo_bit2[i][w];
+        uint64_t x21 = _cojo_bit1[j][w], x22 = _cojo_bit2[j][w];
+        // valid = not missing: missing is bit1=1,bit2=0 → (~bit1 | bit2) clears missing
+        uint64_t both = (~x11 | x12) & (~x21 | x22) & mask;
+        x11 &= both;
+        x12 &= both;
+        x21 &= both;
+        x22 &= both;
+        N_both += __builtin_popcountll(both);
+        // dose = I(bit1)+I(bit2): dose2=(1,1), dose1=(0,1), dose0=(0,0)
+        S12 += __builtin_popcountll(x11 & x21) + __builtin_popcountll(x11 & x22)
+             + __builtin_popcountll(x12 & x21) + __builtin_popcountll(x12 & x22);
+        S1 += __builtin_popcountll(x11) + __builtin_popcountll(x12);
+        S2 += __builtin_popcountll(x21) + __builtin_popcountll(x22);
+    }
+    // GCTA makex: missing → centered 0; divide by full n (not N_both).
+    return (S12 - mu_i * S2 - mu_j * S1 + (double)N_both * mu_i * mu_j) / (double)n;
+}
+
 double gcta::cojo_snp_dot(int i, int j)
 {
     const int n = static_cast<int>(_keep.size());
+    // Prefer bit kernel when available; float cache remains for MSX / small fixtures.
+    if (_cojo_bits_ready) {
+        return cojo_snp_dot_bits(i, j);
+    }
     if (_cojo_X_ready) {
         return _cojo_X.col(i).dot(_cojo_X.col(j)) / (double)n;
     }
-    eigenVector x_i, x_j;
-    makex_eigenVector(i, x_i, true, true);
+    // Cache-disabled fallback: hoist the outer SNP (first arg is fixed in init_B /
+    // init_Z / insert_Z loops) so we do not rematerialize both vectors every pair.
+    if (_cojo_makex_cache_i != i) {
+        makex_eigenVector(i, _cojo_makex_cache, true, true);
+        _cojo_makex_cache_i = i;
+    }
+    eigenVector x_j;
     makex_eigenVector(j, x_j, true, true);
-    return x_i.dot(x_j) / (double)n;
+    return _cojo_makex_cache.dot(x_j) / (double)n;
 }
 
 void gcta::build_cojo_bp_order()
@@ -726,7 +880,7 @@ void gcta::massoc_cond(const vector<int> &slct, const vector<int> &remain, eigen
     if (_B_N.cols() < 1) {
         if (!init_B(slct)) LOGGER.e(0, "there is a collinearity problem of the given list of SNPs.\nYou can try the option --cojo-slct to remove one of each pair of highly correlated SNPs.");
     }
-    if (_Z_N.cols() < 1) init_Z(slct);
+    if (!_Z_cache_ready) init_Z(slct);
 
     int i = 0, j = 0, n = slct.size();
     double chisq = 0.0;
@@ -749,9 +903,9 @@ void gcta::massoc_cond(const vector<int> &slct, const vector<int> &remain, eigen
         j = remain[i];
         B2 = _MSX[j] * _Nd[j];
         if (!CommFunc::FloatEqual(B2, 0.0)) {
-            Z_Bi = _Z_N.col(j).transpose() * _B_N_i;
-            Z_Bi_buf = _Z.col(j).transpose() * _B_i;
-            if (_Z.col(j).dot(Z_Bi_buf) / _MSX_B[j] < _jma_collinear) {
+            Z_Bi = _Z_N_cache.col(j).transpose() * _B_N_i;
+            Z_Bi_buf = _Z_cache.col(j).transpose() * _B_i;
+            if (_Z_cache.col(j).dot(Z_Bi_buf) / _MSX_B[j] < _jma_collinear) {
                 bC[i] = _beta[j] - Z_Bi.cwiseProduct(_D_N).dot(b) / B2;
                 bC_se[i] = 1/B2;     // Revised by Zhihong 4 April 2017 //bC_se[i] = (B2 - _Z_N.col(j).dot(Z_Bi)) / (B2 * B2);
             }
@@ -812,6 +966,80 @@ bool gcta::init_B(const vector<int> &indx)
     return true;
 }
 
+void gcta::fill_z_row_for_selected(int row, int selected_include_idx)
+{
+    const int m = static_cast<int>(_include.size());
+    if (row < 0 || row >= _Z_cache.rows() || selected_include_idx < 0 || selected_include_idx >= m) return;
+
+    int lo = 0, hi = m;
+    if (_jma_actual_geno) {
+        lo = 0;
+        hi = static_cast<int>(_bp_order.size());
+    } else {
+        cojo_window_bounds(selected_include_idx, lo, hi);
+    }
+
+    // Thread-safe: bits / float cache are read-only; avoid shared makex hoist under OpenMP.
+    #pragma omp parallel for schedule(static)
+    for (int t = lo; t < hi; t++) {
+        const int j = _bp_order[t];
+        if (!_jma_actual_geno) {
+            if (selected_include_idx == j) continue;
+            if (_chr[_include[selected_include_idx]] != _chr[_include[j]]) continue;
+            if (abs(_bp[_include[selected_include_idx]] - _bp[_include[j]]) >= _jma_wind_size) continue;
+        }
+        const double d_buf = cojo_snp_dot(j, selected_include_idx);
+        _Z_cache(row, j) = d_buf;
+        _Z_N_cache(row, j) = d_buf * min(_Nd[selected_include_idx], _Nd[j])
+            * sqrt(_MSX[selected_include_idx] * _MSX[j] / (_MSX_B[selected_include_idx] * _MSX_B[j]));
+    }
+}
+
+void gcta::append_z_cache_row(int insert_include_idx, int sorted_pos)
+{
+    const int k = static_cast<int>(_Z_cache.rows());
+    const int m = static_cast<int>(_include.size());
+    _Z_cache.conservativeResize(k + 1, m);
+    _Z_N_cache.conservativeResize(k + 1, m);
+    _Z_cache.row(k).setZero();
+    _Z_N_cache.row(k).setZero();
+    fill_z_row_for_selected(k, insert_include_idx);
+    if (sorted_pos != k) {
+        // Move last row to sorted_pos (same append-then-permute pattern as B).
+        const eigenVector z_last = _Z_cache.row(k);
+        const eigenVector zn_last = _Z_N_cache.row(k);
+        for (int r = k; r > sorted_pos; r--) {
+            _Z_cache.row(r) = _Z_cache.row(r - 1);
+            _Z_N_cache.row(r) = _Z_N_cache.row(r - 1);
+        }
+        _Z_cache.row(sorted_pos) = z_last;
+        _Z_N_cache.row(sorted_pos) = zn_last;
+    }
+}
+
+void gcta::drop_z_cache_row(int erase_pos)
+{
+    const int k = static_cast<int>(_Z_cache.rows());
+    const int m = static_cast<int>(_Z_cache.cols());
+    if (k <= 1) {
+        _Z_cache.resize(0, 0);
+        _Z_N_cache.resize(0, 0);
+        _Z_cache_ready = false;
+        return;
+    }
+    eigenMatrix Z_new(k - 1, m), ZN_new(k - 1, m);
+    if (erase_pos > 0) {
+        Z_new.topRows(erase_pos) = _Z_cache.topRows(erase_pos);
+        ZN_new.topRows(erase_pos) = _Z_N_cache.topRows(erase_pos);
+    }
+    if (erase_pos < k - 1) {
+        Z_new.bottomRows(k - 1 - erase_pos) = _Z_cache.bottomRows(k - 1 - erase_pos);
+        ZN_new.bottomRows(k - 1 - erase_pos) = _Z_N_cache.bottomRows(k - 1 - erase_pos);
+    }
+    _Z_cache.swap(Z_new);
+    _Z_N_cache.swap(ZN_new);
+}
+
 void gcta::init_Z(const vector<int> &indx)
 {
     if (indx.size() < 1) {
@@ -819,37 +1047,17 @@ void gcta::init_Z(const vector<int> &indx)
                  "slct size is zero will cause Eigen Matrix of Vector "
                  "operation error.");
     }
-    int i = 0, j = 0, n = _keep.size();
-    double d_buf = 0.0;
-    _Z.resize(indx.size(), _include.size());
-    _Z_N.resize(indx.size(), _include.size());
-
-    // M3: only SNPs inside any selected SNP's bp window need genotype dots.
-    vector<char> in_window(_include.size(), 0);
-    if (_jma_actual_geno) {
-        std::fill(in_window.begin(), in_window.end(), 1);
-    } else {
-        for (i = 0; i < (int)indx.size(); i++) {
-            int lo = 0, hi = 0;
-            cojo_window_bounds(indx[i], lo, hi);
-            for (int t = lo; t < hi; t++) in_window[_bp_order[t]] = 1;
-        }
+    const int k = static_cast<int>(indx.size());
+    const int m = static_cast<int>(_include.size());
+    _Z_cache = eigenMatrix::Zero(k, m);
+    _Z_N_cache = eigenMatrix::Zero(k, m);
+    for (int i = 0; i < k; i++) {
+        fill_z_row_for_selected(i, indx[i]);
     }
-
-    for (j = 0; j < _include.size(); j++) {
-        _Z.startVec(j);
-        _Z_N.startVec(j);
-        if (!in_window[j]) continue;
-        for (i = 0; i < indx.size(); i++) {
-            if (_jma_actual_geno || (indx[i] != j && _chr[_include[indx[i]]] == _chr[_include[j]] && abs(_bp[_include[indx[i]]] - _bp[_include[j]]) < _jma_wind_size)) {
-                d_buf = cojo_snp_dot(j, indx[i]);
-                _Z.insertBack(i, j) = d_buf;
-                _Z_N.insertBack(i, j) = d_buf * min(_Nd[indx[i]], _Nd[j]) * sqrt(_MSX[indx[i]] * _MSX[j] / (_MSX_B[indx[i]] * _MSX_B[j])); // added by Jian Yang 18/12/2013
-            }
-        }
-    }
-    _Z.finalize();
-    _Z_N.finalize();
+    _Z_cache_ready = true;
+    // Keep sparse _Z/_Z_N empty; massoc_cond reads dense caches.
+    _Z.resize(0, 0);
+    _Z_N.resize(0, 0);
 }
 
 bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
@@ -897,7 +1105,7 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
     _B.finalize();
     _B_N.finalize();
 
-    // M2: rank-1 inverse update when a prior inverse matches the pre-insert selection.
+    // Rank-1 inverse update when a prior inverse matches the pre-insert selection.
     // Fall back to LDLT when sizes don't match (first build after init_B edge cases).
     const bool can_incr = (_B_i.rows() == (int)indx.size() && _B_i.cols() == (int)indx.size()
                            && _B_N_i.rows() == (int)indx.size() && _B_N_i.cols() == (int)indx.size()
@@ -913,13 +1121,24 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
         const double dBN = _MSX[insert_indx] * _Nd[insert_indx];
 
         eigenMatrix B_i_app, B_N_i_app;
-        inv_update_forward_append(B_i_buf, cB, dB, B_i_app);
-        inv_update_forward_append(B_N_i_buf, cBN, dBN, B_N_i_app);
+        // Reject non-PD / singular Schur complement explicitly (stock LDLT minCoeff < 0).
+        if (!inv_update_forward_append(B_i_buf, cB, dB, B_i_app)
+            || !inv_update_forward_append(B_N_i_buf, cBN, dBN, B_N_i_app)) {
+            _jma_snpnum_collienar++;
+            _B = B_buf;
+            _B_N = B_N_buf;
+            _B_i = B_i_buf;
+            _B_N_i = B_N_i_buf;
+            return false;
+        }
         _B_i = move_last_to_pos(B_i_app, pos);
         _B_N_i = move_last_to_pos(B_N_i_app, pos);
 
-        // GCTA collinearity test on the correlation-scale inverse diagonal.
-        if ((1 - eigenVector::Constant(ix.size(), 1).array() / (diagB.array() * _B_i.diagonal().array())).maxCoeff() > _jma_collinear) {
+        // Same three guards as the LDLT path: PD, cond(D) > 30, per-SNP collinearity.
+        SimplicialLDLT<eigenSparseMat> ldlt_B(_B);
+        if (ldlt_B.vectorD().minCoeff() < 0
+            || sqrt(ldlt_B.vectorD().maxCoeff() / ldlt_B.vectorD().minCoeff()) > 30
+            || (1 - eigenVector::Constant(ix.size(), 1).array() / (diagB.array() * _B_i.diagonal().array())).maxCoeff() > _jma_collinear) {
             _jma_snpnum_collienar++;
             _B = B_buf;
             _B_N = B_N_buf;
@@ -950,43 +1169,9 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
         _D_N[j] = _MSX[ix[j]] * _Nd[ix[j]];
     }
 
-    if (_Z_N.cols() < 1) return true;
-    eigenSparseMat Z_buf(_Z), Z_N_buf(_Z_N);
-    _Z.resize(ix.size(), _include.size());
-    _Z_N.resize(ix.size(), _include.size());
-
-    // M3: compute the new selected row only inside the bp window of insert_indx.
-    vector<char> in_window(_include.size(), 0);
-    if (_jma_actual_geno) {
-        std::fill(in_window.begin(), in_window.end(), 1);
-    } else {
-        int lo = 0, hi = 0;
-        cojo_window_bounds(insert_indx, lo, hi);
-        for (int t = lo; t < hi; t++) in_window[_bp_order[t]] = 1;
-    }
-
-    for (j = 0; j < _include.size(); j++) {
-        _Z.startVec(j);
-        _Z_N.startVec(j);
-        get_insert_row = false;
-        for (i = 0; i < ix.size(); i++) {
-            if (insert_indx == ix[i]) {
-                if (in_window[j] && (_jma_actual_geno || (ix[i] != j && _chr[_include[ix[i]]] == _chr[_include[j]] && abs(_bp[_include[ix[i]]] - _bp[_include[j]]) < _jma_wind_size))) {
-                    d_buf = cojo_snp_dot(j, insert_indx);
-                    _Z.insertBack(i, j) = d_buf;
-                    _Z_N.insertBack(i, j) = d_buf * min(_Nd[ix[i]], _Nd[j]) * sqrt(_MSX[ix[i]] * _MSX[j] / (_MSX_B[ix[i]] * _MSX_B[j])); // added by Jian Yang 18/12/2013
-                }
-                get_insert_row = true;
-            } else {
-                if (Z_buf.coeff(i - get_insert_row, j) != 0) {
-                    _Z.insertBack(i, j) = Z_buf.coeff(i - get_insert_row, j);
-                    _Z_N.insertBack(i, j) = Z_N_buf.coeff(i - get_insert_row, j);
-                }
-            }
-        }
-    }
-    _Z.finalize();
-    _Z_N.finalize();
+    // Incremental dense Z row append (OpenMP window fill); skip if Z never built.
+    if (!_Z_cache_ready) return true;
+    append_z_cache_row(insert_indx, pos);
 
     return true;
 }
@@ -1022,7 +1207,7 @@ void gcta::erase_B_and_Z(const vector<int> &indx, int erase_indx) {
     _B.finalize();
     _B_N.finalize();
 
-    // M2: rank-1 downdate of inverses when sizes match; else LDLT rebuild.
+    // Rank-1 downdate of inverses when sizes match; else LDLT rebuild.
     // Always refresh inverses (even if _Z was never built) so backward elimination stays consistent.
     const bool can_decr = (_B_i.rows() == (int)indx.size() && _B_i.cols() == (int)indx.size()
                            && _B_N_i.rows() == (int)indx.size() && _B_N_i.cols() == (int)indx.size()
@@ -1046,36 +1231,8 @@ void gcta::erase_B_and_Z(const vector<int> &indx, int erase_indx) {
         }
     }
 
-    if (_Z_N.cols() < 1) return;
-
-    if (indx.size() > 1) {
-        eigenSparseMat Z_buf(_Z), Z_N_buf(_Z_N);
-        _Z.resize(indx.size() - 1, _include.size());
-        _Z_N.resize(indx.size() - 1, _include.size());
-        for (j = 0; j < _include.size(); j++) {
-            _Z.startVec(j);
-            _Z_N.startVec(j);
-            get_insert_row = false;
-            for (i = 0; i < indx.size(); i++) {
-                if (erase_indx == indx[i]) {
-                    get_insert_row = true;
-                    continue;
-                }
-                if (Z_buf.coeff(i, j) != 0) {
-                    _Z.insertBack(i - get_insert_row, j) = Z_buf.coeff(i, j);
-                    _Z_N.insertBack(i - get_insert_row, j) =
-                        Z_N_buf.coeff(i, j);
-                }
-            }
-        }
-
-    } else {
-        _Z.resize(0, 0);
-        _Z_N.resize(0, 0);
-    }
-
-    _Z.finalize();
-    _Z_N.finalize();
+    if (!_Z_cache_ready) return;
+    drop_z_cache_row(pos);
 }
 
 /*

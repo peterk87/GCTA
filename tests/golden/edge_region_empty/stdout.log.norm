@@ -18,8 +18,6 @@ Accepted options:
 Reading PLINK FAM file from [data.fam].
 100 individuals to be included from [data.fam].
 Reading PLINK BIM file from [data.bim].
-Applying region filter at BIM read: chr=1 bp=[0,1000001].
-0 SNPs in region kept from [data.bim] (2 SNPs scanned).
 Extracting SNPs 1000kb away from the position [chr=1; bp=1] in either direction ...
 Error: no SNP found in this region.
 An error occurs, please check the options or data

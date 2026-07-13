@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Tier-A golden / characterization tests for gcta64 --cojo-*.
-# See sandbox/2026-07-13-manc-cojo/TESTING_PLAN.md §3/§6.
 #
 # Layout (--tests-dir, default ./tests):
 #   fixtures/<case>/   inputs + cmd file (+ optional expect_exit)
 #   golden/<case>/     blessed *.norm snapshots
 #
 # Comparison modes:
-#   default          exact: every artifact byte-identical vs golden  -> M1 gate
+#   default          exact: every artifact byte-identical vs golden
 #   --tol <bj-tol>   tolerant: labels/SNP-sets exact; numeric within tol
-#                    (.jma via compare_cojo.py, .cma/.ldr via numdiff.py) -> M2+ gate
+#                    (.jma via compare_cojo.py, .cma/.ldr via numdiff.py)
 #
 # Usage:
 #   golden_test.sh [--gcta /abs/path/gcta64] [--tests-dir tests] [--tol BJTOL]
@@ -60,7 +59,7 @@ while IFS= read -r -d '' d; do
 done < <(find "$FIX" -mindepth 1 -maxdepth 1 -type d ! -name '.gitkeep' -print0 | sort -z)
 
 if [ ${#CASES_FROM_FIX[@]} -eq 0 ]; then
-  echo "No COJO fixtures yet (TESTING_PLAN S1–S2). Skipping golden tests."
+  echo "No COJO fixtures yet. Skipping golden tests."
   [ "$ALLOW_EMPTY" -eq 1 ] && exit 0
   exit 1
 fi
@@ -76,6 +75,12 @@ normalize() {
     -e '/^Hostname:/d' \
     -e '/^Overall computational time:/d' \
     -e '/^COJO genotype cache enabled /d' \
+    -e '/^COJO bit-packed genotypes enabled /d' \
+    -e '/^BED I\/O: /d' \
+    -e '/^BIM region filter active /d' \
+    -e '/^MA region match: /d' \
+    -e '/Applying region filter at BIM read:/d' \
+    -e '/SNPs in region kept from /d' \
     -e '/Saving .* to \[/d' \
     -e 's#--out[[:space:]]+[^[:space:]]+#--out OUTPREFIX#g' \
     -e 's#\[[^]]+/([^/]+\.(cojo|ma|bed|bim|fam|badsnps))\]#[\1]#g' \

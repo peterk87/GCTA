@@ -10,9 +10,11 @@
  * details
  */
 
+#include <algorithm>
 #include <sstream>
 #include <iterator>
 #include <set>
+#include <utility>
 #include "gcta.h"
 #include "Logger.h"
 #include "StrFunc.h"
@@ -231,10 +233,39 @@ void gcta::init_include()
     }
 }
 
-// some code are adopted from PLINK with modifications
+// Decode one SNP-major PLINK BED record into compacted keep-order bit vectors.
+// Encoding matches legacy read_bedfile: 00 AA → (1,1); 11 BB → (0,0); 01 het → (0,1); 10 miss → (1,0)
+// after the (!b[k]) flip used historically in GCTA.
+static void decode_bed_snp(const char *bytes, int indi_num, const vector<int> &rindi,
+                           vector<bool> &snp1, vector<bool> &snp2)
+{
+    int keep_n = 0;
+    for (int t = 0; t < indi_num; ++t) {
+        if (rindi[t]) ++keep_n;
+    }
+    snp1.assign(keep_n, false);
+    snp2.assign(keep_n, false);
+    int indi_indx = 0;
+    for (int i = 0; i < indi_num;) {
+        bitset<8> b((unsigned char)bytes[i / 4]);
+        int k = 0;
+        while (k < 7 && i < indi_num) {
+            if (!rindi[i]) k += 2;
+            else {
+                snp2[indi_indx] = !b[k++];
+                snp1[indi_indx] = !b[k++];
+                indi_indx++;
+            }
+            ++i;
+        }
+    }
+}
+
+// some code are adopted from PLINK with modifications.
+// Block-buffered reads + OpenMP SNP decode (better for large / remote BED files).
 void gcta::read_bedfile(string bedfile)
 {
-    int i = 0, j = 0, k = 0;
+    int i = 0, j = 0;
 
     // Flag for reading individuals and SNPs
     vector<int> rindi, rsnp;
@@ -244,59 +275,74 @@ void gcta::read_bedfile(string bedfile)
     if (_include.size() == 0) LOGGER.e(0, "no SNP is retained for analysis.");
     if (_keep.size() == 0) LOGGER.e(0, "no individual is retained for analysis.");
 
-    // Read bed file
-    char ch[1];
-    bitset<8> b;
     _snp_1.resize(_include.size());
     _snp_2.resize(_include.size());
-    for (i = 0; i < _include.size(); i++) {
-        _snp_1[i].reserve(_keep.size());
-        _snp_2[i].reserve(_keep.size());
-    }
+
     fstream BIT(bedfile.c_str(), ios::in | ios::binary);
     if (!BIT) LOGGER.e(0, "cannot open the file [" + bedfile + "] to read.");
     LOGGER << "Reading PLINK BED file from [" + bedfile + "] in SNP-major format ..." << endl;
+    char ch[1];
     for (i = 0; i < 3; i++) BIT.read(ch, 1); // skip the first three bytes
+
     const bool use_bed_row = !_snp_bed_row.empty();
     if (use_bed_row && (int)_snp_bed_row.size() != _snp_num) {
         LOGGER.e(0, "internal error: _snp_bed_row size does not match SNP count.");
     }
     const uint64_t bytes_per_snp = (uint64_t)((_indi_num + 3) / 4);
-    int snp_indx = 0, indi_indx = 0;
-    uint64_t next_bed_row = 0;
-    for (j = 0, snp_indx = 0; j < _snp_num; j++) { // Read genotype in SNP-major mode, 00: homozygote AA; 11: homozygote BB; 01: hetezygote; 10: missing
-        if (!rsnp[j]) {
-            if (!use_bed_row) {
-                for (i = 0; i < _indi_num; i += 4) BIT.read(ch, 1);
-            }
-            // With bed-row map, skipped SNPs are jumped over via seek below.
-            continue;
-        }
-        if (use_bed_row) {
-            const uint64_t target = _snp_bed_row[j];
-            if (target != next_bed_row) {
-                BIT.seekg((streamoff)(3 + target * bytes_per_snp), ios::beg);
-            }
-            next_bed_row = target + 1;
-        }
-        for (i = 0, indi_indx = 0; i < _indi_num;) {
-            BIT.read(ch, 1);
-            if (!BIT) LOGGER.e(0, "problem with the BED file ... has the FAM/BIM file been changed?");
-            b = ch[0];
-            k = 0;
-            while (k < 7 && i < _indi_num) { // change code: 11 for AA; 00 for BB;
-                if (!rindi[i]) k += 2;
-                else {
-                    _snp_2[snp_indx][indi_indx] = (!b[k++]);
-                    _snp_1[snp_indx][indi_indx] = (!b[k++]);
-                    indi_indx++;
-                }
-                i++;
-            }
-        }
-        if (snp_indx == _include.size()) break;
-        snp_indx++;
+
+    // (bed_row, output snp index) for retained SNPs in bim order
+    vector<pair<uint64_t, int> > selected;
+    selected.reserve(_include.size());
+    int snp_out = 0;
+    for (j = 0; j < _snp_num; j++) {
+        if (!rsnp[j]) continue;
+        const uint64_t bed_row = use_bed_row ? _snp_bed_row[j] : (uint64_t)j;
+        selected.push_back(make_pair(bed_row, snp_out++));
     }
+    if ((int)selected.size() != (int)_include.size()) {
+        LOGGER.e(0, "internal error: selected SNP count does not match _include.");
+    }
+
+    // Default 64 MiB read blocks.
+    const size_t bed_block_mb = 64;
+    const size_t block_bytes = bed_block_mb * 1024ULL * 1024ULL;
+    const size_t block_snps = std::max<size_t>(1, block_bytes / (size_t)bytes_per_snp);
+    vector<char> block_buffer(block_snps * (size_t)bytes_per_snp);
+
+    LOGGER << "BED I/O: " << bed_block_mb << " MiB blocks, OpenMP decode ("
+           << omp_get_max_threads() << " threads), " << selected.size() << " SNPs." << endl;
+
+    size_t idx = 0;
+    while (idx < selected.size()) {
+        const uint64_t block_start = selected[idx].first;
+        size_t max_snps = block_snps;
+        // Do not read past the last selected bed row.
+        const uint64_t last_needed = selected.back().first + 1;
+        if (block_start + max_snps > last_needed)
+            max_snps = (size_t)(last_needed - block_start);
+        if (max_snps == 0) LOGGER.e(0, "internal error: empty BED block.");
+
+        const size_t bytes_to_read = max_snps * (size_t)bytes_per_snp;
+        BIT.seekg((streamoff)(3 + block_start * bytes_per_snp), ios::beg);
+        BIT.read(block_buffer.data(), (streamsize)bytes_to_read);
+        if (!BIT || (size_t)BIT.gcount() != bytes_to_read) {
+            LOGGER.e(0, "problem with the BED file ... has the FAM/BIM file been changed?");
+        }
+
+        const uint64_t block_end = block_start + max_snps;
+        const size_t start_idx = idx;
+        while (idx < selected.size() && selected[idx].first < block_end) ++idx;
+        const size_t end_idx = idx;
+
+#pragma omp parallel for schedule(static)
+        for (size_t t = start_idx; t < end_idx; ++t) {
+            const size_t offset = (size_t)(selected[t].first - block_start) * (size_t)bytes_per_snp;
+            const int out_i = selected[t].second;
+            decode_bed_snp(block_buffer.data() + offset, _indi_num, rindi,
+                           _snp_1[out_i], _snp_2[out_i]);
+        }
+    }
+
     BIT.clear();
     BIT.close();
     LOGGER << "Genotype data for " << _keep.size() << " individuals and " << _include.size() << " SNPs to be included from [" + bedfile + "]." << endl;

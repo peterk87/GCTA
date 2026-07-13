@@ -34,3 +34,10 @@ compile_commands.json
 *.zip
 
 sandbox/
+
+*.pyc
+.pytest_cache/
+.DS_Store
+.cursor/
+.vscode/
+.idea/

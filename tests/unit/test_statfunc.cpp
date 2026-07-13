@@ -2,7 +2,7 @@
 
 #include "StatFunc.h"
 
-// Light StatFunc smoke tests (TESTING_PLAN S3). Avoid LOGGER.e death paths.
+// Light StatFunc smoke tests. Avoid LOGGER.e death paths.
 
 TEST(StatFunc, PchisqDf1KnownValues) {
     // chi^2(1) critical values: P(X > 3.841) ≈ 0.05, P(X > 6.635) ≈ 0.01

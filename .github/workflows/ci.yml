@@ -157,5 +157,5 @@ jobs:
           # shellcheck source=/dev/null
           source /opt/intel/oneapi/setvars.sh
           chmod +x bin/gcta64 scripts/ci/golden_test.sh
-          # Fixtures + goldens checked in (TESTING_PLAN S1–S2)
-          ./scripts/ci/golden_test.sh --gcta "$(pwd)/bin/gcta64" --tests-dir tests
+          # Tolerant numeric compare (rank-1 FP differs at ULP); SNP sets still exact.
+          ./scripts/ci/golden_test.sh --gcta "$(pwd)/bin/gcta64" --tests-dir tests --tol 1e-6

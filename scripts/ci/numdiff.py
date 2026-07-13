@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Token-wise numeric-tolerant file comparison for COJO .cma/.ldr golden tests.
 
-Used by golden_test.sh in tolerant (M2+) mode: structure and non-numeric tokens
+Used by golden_test.sh in --tol mode: structure and non-numeric tokens
 (SNP names, alleles, "NA", headers) must match exactly; numeric tokens may differ
 within tolerance (BLAS/compiler reassociation perturbs low-order digits). Line and
 per-line token counts must match exactly — a shape change is always a real diff.

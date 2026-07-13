@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Build deterministic COJO fixtures under tests/fixtures/ (TESTING_PLAN S1–S2).
+"""Build deterministic COJO fixtures under tests/fixtures/.
 
-Reuses the block-latent genotype model from the sandbox gen_synth_data.py.
 Also writes hand-tweaked edge cases (allele swap, freq mismatch, collinear, empty region).
 """
 from __future__ import annotations
@@ -160,6 +159,38 @@ def case_edge_collinear(seed=4):
     )
 
 
+def case_collinear_reject(seed=9):
+    """Two independent signals plus a near-copy of A that must not enter the joint model.
+
+    A and B are strong and nearly independent; C ≈ A (~0.92 corr). Stepwise should
+    select A and B only. Useful as a multi-insert regression alongside small_multi.
+    """
+    rng = np.random.default_rng(seed)
+    n = 400
+    a = rng.binomial(2, 0.30, size=n).astype(np.int8)
+    b = rng.binomial(2, 0.35, size=n).astype(np.int8)  # independent of A
+    # C: near-copy of A (~0.92 corr) via redrawing ~8% of calls independently.
+    c = a.copy()
+    flip = rng.random(n) < 0.08
+    c[flip] = rng.binomial(2, 0.30, size=int(flip.sum())).astype(np.int8)
+    G = np.column_stack([a, b, c]).astype(np.int8)
+    bim = [
+        (1, "rs_cr_A", 0, 25_000_000, "A", "G"),
+        (1, "rs_cr_B", 0, 25_400_000, "A", "G"),
+        (1, "rs_cr_C", 0, 25_050_000, "A", "G"),  # near A, inside default window
+    ]
+    # A,B,C all strong and near-equal so C stays the top conditional candidate after
+    # A is picked (C≈0.93·A) and is REJECTED on insert rather than dropped at the
+    # conditional stage. A kept marginally strongest so selection order is stable.
+    y = make_pheno(rng, G, np.array([0, 1, 2]), np.array([1.25, 1.15, 1.10]), h2=0.6)
+    out = FIX / "collinear_reject" / "data"
+    write_plink(out, G, bim, G.mean(0) / 2, y, n)
+    (FIX / "collinear_reject" / "cmd").write_text(
+        "--bfile data --cojo-file data.ma --cojo-slct --cojo-p 5e-8 "
+        "--cojo-collinear 0.9 --thread-num 1 --maf 0.01\n"
+    )
+
+
 def case_edge_allele(seed=5):
     """A1/A2 swapped in .ma vs .bim → .badsnps."""
     rng = np.random.default_rng(seed)
@@ -259,6 +290,7 @@ def main():
     case_edge_freqdiff()
     case_edge_region_empty()
     case_forward_and_topn()
+    case_collinear_reject()
     print(f"Fixtures written under {FIX}")
     for p in sorted(FIX.iterdir()):
         if p.is_dir() and (p / "cmd").exists():

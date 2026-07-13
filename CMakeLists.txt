@@ -165,6 +165,13 @@ if(NOT WIN32)
     targets_includes(GCTA_TARGETS ${GSL_INCLUDE_DIRS})
 endif()
 
+# OpenMP compile/link flags for all platforms (COJO Z fills, BED decode, etc.).
+target_link_libraries(gcta64 OpenMP::OpenMP_CXX)
+target_link_libraries(mainV1 OpenMP::OpenMP_CXX)
+foreach(gcta_lib ${GCTA_LIBS})
+    target_link_libraries(${gcta_lib} OpenMP::OpenMP_CXX)
+endforeach()
+
 if(APPLE)
     # For Eigen backend, OpenBLAS, LAPACK
     # Get macOS SDK path
@@ -177,12 +184,6 @@ if(APPLE)
 
     targets_includes(GCTA_TARGETS ${VECLIB_INCLUDE_DIR})
     targets_includes(GCTA_TARGETS ${OPENBLAS_INCLUDE_DIR})
-
-    target_link_libraries(gcta64 OpenMP::OpenMP_CXX)
-    target_link_libraries(mainV1 OpenMP::OpenMP_CXX)
-    foreach(gcta_lib ${GCTA_LIBS})
-        target_link_libraries(${gcta_lib} OpenMP::OpenMP_CXX)
-    endforeach()
 
     find_library(ACCELERATE_LIBRARY Accelerate)
     target_link_libraries(gcta64 ${ACCELERATE_LIBRARY})

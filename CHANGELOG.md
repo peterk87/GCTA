@@ -20,7 +20,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 
 ### Added
 
-- COJO characterization / golden-test harness (`scripts/ci/golden_test.sh`, `compare_cojo.py`, `numdiff.py`) with **exact** (M1) and **`--tol`** (M2+) modes.
+- COJO characterization / golden-test harness (`scripts/ci/golden_test.sh`, `compare_cojo.py`, `numdiff.py`) with **exact** and **`--tol`** modes.
 - Deterministic COJO fixtures under `tests/fixtures/` and blessed goldens under `tests/golden/` (`scripts/ci/make_fixtures.py`).
 - GoogleTest unit tests for `CommFunc` / `StrFunc` / `StatFunc` and mirrored COJO inverse-update oracles (`tests/unit/`).
 - GitHub Actions CI (lint, unit tests, MKL build, golden job) under `.github/workflows/`.
@@ -28,15 +28,23 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 
 ### Changed
 
-- **COJO / PLINK I/O (M1):** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM per LD-block process).
-- **COJO stepwise (M2):** `insert_B_and_Z` / `erase_B_and_Z` maintain dense `_B_i` / `_B_N_i` with rank-1 Schur updates (append-then-permute for sorted SNP order) instead of rebuilding via `SimplicialLDLT` each step; GCTA diagonal collinearity test retained.
-- **COJO LD fill (M3):** `_bp_order` + window bounds restrict `init_Z` / insert-Z genotype dots to SNPs within `--cojo-wind`.
-- **COJO genotype dots (M4):** optional centered genotype cache (`_cojo_X`, capped ~320MB) reused by `cojo_snp_dot` so LD products avoid rematerializing from `vector<bool>` bit genotypes.
+- **COJO / PLINK I/O:** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM per LD-block process).
+- **COJO MA match:** with the BIM region filter active, `.ma` lines outside the region index are skipped early (phenotypic-variance median still uses all lines for parity).
+- **COJO stepwise:** `insert_B_and_Z` / `erase_B_and_Z` maintain dense `_B_i` / `_B_N_i` with rank-1 Schur updates (append-then-permute for sorted SNP order) instead of rebuilding via `SimplicialLDLT` each step; incremental insert keeps stock’s three guards (Schur/`denom>0`, LDLT `cond(D)>30`, per-SNP collinearity).
+- **COJO LD fill:** `_bp_order` + window bounds restrict `init_Z` / insert-Z genotype dots to SNPs within `--cojo-wind`.
+- **COJO LD cache:** dense `_Z_cache` / `_Z_N_cache` with OpenMP window row fills; insert/erase append or drop one row instead of rebuilding sparse `_Z`.
+- **COJO genotype dots:** optional centered genotype cache (`_cojo_X`, capped ~320MB per process) plus bit-packed keep-subset planes and popcnt kernel in `cojo_snp_dot`; cache-off makex path still hoists the outer vector.
+- **PLINK BED I/O:** `read_bedfile` uses 64 MiB block-buffered reads and OpenMP SNP decode, including when seeking via `_snp_bed_row`.
+- **OpenMP:** `mainV1` / `gcta64` / GCTA libs link `OpenMP::OpenMP_CXX` on all platforms (previously Apple-only); `option()` always sets `OMP_NUM_THREADS` and `omp_set_num_threads` from `--thread-num` / `--threads`.
 
 ### Fixed
 
 - Golden harness no longer aborts the whole run on the first `DIFFERENT` comparator under `set -euo pipefail` (exit codes captured via `if txt=$(…)`).
-- `erase_B_and_Z` always refreshes inverses (even when `_Z` was never built).
+- `erase_B_and_Z` always refreshes inverses (even when `_Z` was never built) — intentional semantics fix vs stock’s early return when `_Z_N` was empty (e.g. backward-only `slct_stay`).
+- Incremental COJO insert restores non-PD (`denom≤0`) and `cond>30` guards that were dropped when switching off per-step LDLT solve.
+- `cojo_snp_dot` cache-disabled fallback no longer rematerializes both genotype vectors every pair.
+- Legacy `option()` path never called `omp_set_num_threads`, so `#pragma omp` in COJO Z fills was a no-op even when `--thread-num` was set.
+- CI / CTest primary golden gate uses `--tol 1e-6`; exact byte mode kept as `cojo_golden_exact`.
 
 ---
 

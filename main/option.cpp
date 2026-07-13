@@ -17,7 +17,9 @@
  */
 
 #include <cstdio>
+#include <cstdlib>
 #include <stdlib.h>
+#include <string>
 #include "gcta.h"
 #include "Logger.h"
 
@@ -1301,7 +1303,13 @@ void option(int option_num, char* option_str[])
     if(pcl_flag && gwas_data_flag) {
         pcl_flag = false; gwas_adj_pc_flag = true; thread_flag = false;
     }
-    // OpenMP
+    // Honor --thread-num / --threads for OpenMP regions (COJO Z fills, BED decode, etc.).
+#ifdef _WIN32
+    _putenv_s("OMP_NUM_THREADS", std::to_string(thread_num).c_str());
+#else
+    setenv("OMP_NUM_THREADS", std::to_string(thread_num).c_str(), 1);
+#endif
+    omp_set_num_threads(thread_num);
     if (thread_flag) {
         if (thread_num == 1) LOGGER << "Note: This is a multi-thread program. You could specify the number of threads by the --thread-num option to speed up the computation if there are multiple processors in your machine." << endl;
         else LOGGER << "Note: the program will be running on " << thread_num << " threads." << endl;
@@ -1364,7 +1372,7 @@ void option(int option_num, char* option_str[])
             if (!rm_indi_file.empty()) pter_gcta->remove_indi(rm_indi_file);
             if (!update_sex_file.empty()) pter_gcta->update_sex(update_sex_file);
             if (!blup_indi_file.empty()) pter_gcta->read_indi_blup(blup_indi_file);
-            // M1: apply --extract-region-bp during BIM read to avoid full-chr indexes.
+            // Apply --extract-region-bp during BIM read to avoid full-chr indexes.
             if (bfile_flag == 1 && extract_region_chr > 0) {
                 pter_gcta->set_bim_region_filter(extract_region_chr, extract_region_bp, extract_region_wind);
             }
