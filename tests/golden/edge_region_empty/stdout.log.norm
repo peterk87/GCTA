@@ -1,0 +1,25 @@
+*******************************************************************
+* Genome-wide Complex Trait Analysis (GCTA)
+* version v1.95.3 Linux
+* Built at Jul 13 2026 HH:MM:SS, by GCC 15.2
+* (C) 2010-present, Yang Lab, Westlake University
+* Please report bugs to Jian Yang <jian.yang@westlake.edu.cn>
+*******************************************************************
+
+Accepted options:
+--bfile data
+--cojo-file data.ma
+--cojo-slct
+--thread-num 1
+--extract-region-bp 1 1 1000Kb
+--out OUTPREFIX
+
+
+Reading PLINK FAM file from [data.fam].
+100 individuals to be included from [data.fam].
+Reading PLINK BIM file from [data.bim].
+Applying region filter at BIM read: chr=1 bp=[0,1000001].
+0 SNPs in region kept from [data.bim] (2 SNPs scanned).
+Extracting SNPs 1000kb away from the position [chr=1; bp=1] in either direction ...
+Error: no SNP found in this region.
+An error occurs, please check the options or data

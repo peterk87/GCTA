@@ -3,6 +3,8 @@
 !.gitignore
 !.gitmodules
 !.gitattributes
+!.github/
+!.github/**
 !.opencode/
 compile_commands.json
 *[Bb]uild*/
@@ -30,3 +32,5 @@ compile_commands.json
 *.db
 *.tar
 *.zip
+
+sandbox/

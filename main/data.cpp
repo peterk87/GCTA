@@ -139,6 +139,15 @@ void gcta::init_keep() {
     }
 }
 
+void gcta::set_bim_region_filter(int chr, int bp, int wind_bp)
+{
+    _bim_region_filter = true;
+    _bim_region_chr = chr;
+    _bim_region_start = bp - wind_bp;
+    _bim_region_end = bp + wind_bp;
+    if (_bim_region_start < 0) _bim_region_start = 0;
+}
+
 void gcta::read_bimfile(string bimfile) {
     // Read bim file: recombination rate is defined between SNP i and SNP i-1
     int ibuf = 0;
@@ -148,34 +157,56 @@ void gcta::read_bimfile(string bimfile) {
     ifstream Bim(bimfile.c_str());
     if (!Bim) LOGGER.e(0, "cannot open the file [" + bimfile + "] to read.");
     LOGGER << "Reading PLINK BIM file from [" + bimfile + "]." << endl;
+    if (_bim_region_filter) {
+        LOGGER << "Applying region filter at BIM read: chr=" << _bim_region_chr
+               << " bp=[" << _bim_region_start << "," << _bim_region_end << "]." << endl;
+    }
     _chr.clear();
     _snp_name.clear();
     _genet_dst.clear();
     _bp.clear();
     _allele1.clear();
     _allele2.clear();
+    _snp_bed_row.clear();
+    uint64_t bed_row = 0;
+    uint64_t scanned = 0;
     while (Bim) {
         Bim >> ibuf;
         if (Bim.eof()) break;
-        _chr.push_back(ibuf);
         Bim >> str_buf;
-        _snp_name.push_back(str_buf);
         Bim >> dbuf;
-        _genet_dst.push_back(dbuf);
-        Bim >> ibuf;
-        _bp.push_back(ibuf);
+        int bp_val = 0;
+        Bim >> bp_val;
         Bim >> cbuf;
         StrFunc::to_upper(cbuf);
-        _allele1.push_back(cbuf);
+        string a1 = cbuf;
         Bim >> cbuf;
         StrFunc::to_upper(cbuf);
-        _allele2.push_back(cbuf);
+        string a2 = cbuf;
+        scanned++;
+        const bool keep = !_bim_region_filter
+            || (ibuf == _bim_region_chr && bp_val >= _bim_region_start && bp_val <= _bim_region_end);
+        if (keep) {
+            _chr.push_back(ibuf);
+            _snp_name.push_back(str_buf);
+            _genet_dst.push_back(dbuf);
+            _bp.push_back(bp_val);
+            _allele1.push_back(a1);
+            _allele2.push_back(a2);
+            if (_bim_region_filter) _snp_bed_row.push_back(bed_row);
+        }
+        bed_row++;
     }
     Bim.close();
     _snp_num = _chr.size();
     _ref_A = _allele1;
     _other_A = _allele2;
-    LOGGER << _snp_num << " SNPs to be included from [" + bimfile + "]." << endl;
+    if (_bim_region_filter) {
+        LOGGER << _snp_num << " SNPs in region kept from [" + bimfile + "] ("
+               << scanned << " SNPs scanned)." << endl;
+    } else {
+        LOGGER << _snp_num << " SNPs to be included from [" + bimfile + "]." << endl;
+    }
 
     // Initialize _include
     init_include();
@@ -226,11 +257,27 @@ void gcta::read_bedfile(string bedfile)
     if (!BIT) LOGGER.e(0, "cannot open the file [" + bedfile + "] to read.");
     LOGGER << "Reading PLINK BED file from [" + bedfile + "] in SNP-major format ..." << endl;
     for (i = 0; i < 3; i++) BIT.read(ch, 1); // skip the first three bytes
+    const bool use_bed_row = !_snp_bed_row.empty();
+    if (use_bed_row && (int)_snp_bed_row.size() != _snp_num) {
+        LOGGER.e(0, "internal error: _snp_bed_row size does not match SNP count.");
+    }
+    const uint64_t bytes_per_snp = (uint64_t)((_indi_num + 3) / 4);
     int snp_indx = 0, indi_indx = 0;
+    uint64_t next_bed_row = 0;
     for (j = 0, snp_indx = 0; j < _snp_num; j++) { // Read genotype in SNP-major mode, 00: homozygote AA; 11: homozygote BB; 01: hetezygote; 10: missing
         if (!rsnp[j]) {
-            for (i = 0; i < _indi_num; i += 4) BIT.read(ch, 1);
+            if (!use_bed_row) {
+                for (i = 0; i < _indi_num; i += 4) BIT.read(ch, 1);
+            }
+            // With bed-row map, skipped SNPs are jumped over via seek below.
             continue;
+        }
+        if (use_bed_row) {
+            const uint64_t target = _snp_bed_row[j];
+            if (target != next_bed_row) {
+                BIT.seekg((streamoff)(3 + target * bytes_per_snp), ios::beg);
+            }
+            next_bed_row = target + 1;
         }
         for (i = 0, indi_indx = 0; i < _indi_num;) {
             BIT.read(ch, 1);
@@ -284,6 +331,8 @@ void gcta::update_bim(vector<int> &rsnp) {
     vector<string> a1_buf, a2_buf, ref_A_buf, other_A_buf;
     vector<string> snp_name_buf;
     vector<double> genet_dst_buf, impRsq_buf;
+    vector<uint64_t> bed_row_buf;
+    const bool keep_bed_row = !_snp_bed_row.empty();
     for (i = 0; i < _snp_num; i++) {
         if (!rsnp[i]) continue;
         chr_buf.push_back(_chr[i]);
@@ -295,6 +344,7 @@ void gcta::update_bim(vector<int> &rsnp) {
         ref_A_buf.push_back(_ref_A[i]);
         other_A_buf.push_back(_other_A[i]);
         if(_impRsq.size()>0) impRsq_buf.push_back(_impRsq[i]);
+        if (keep_bed_row) bed_row_buf.push_back(_snp_bed_row[i]);
     }
     _chr.clear();
     _snp_name.clear();
@@ -305,6 +355,7 @@ void gcta::update_bim(vector<int> &rsnp) {
     _ref_A.clear();
     _other_A.clear();
     _impRsq.clear();
+    _snp_bed_row.clear();
     _chr = chr_buf;
     _snp_name = snp_name_buf;
     _genet_dst = genet_dst_buf;
@@ -314,6 +365,7 @@ void gcta::update_bim(vector<int> &rsnp) {
     _ref_A = ref_A_buf;
     _other_A = other_A_buf;
     _impRsq=impRsq_buf;
+    _snp_bed_row = bed_row_buf;
     _snp_num = _chr.size();
     _include.clear();
     _include.resize(_snp_num);

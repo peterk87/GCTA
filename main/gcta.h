@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iomanip>
 #include <bitset>
+#include <cstdint>
 #include <map>
 #include <Eigen/StdVector>
 #include "zfstream.h"
@@ -86,6 +87,8 @@ public:
     void extract_single_snp(string snpname);
     void extract_region_snp(string snpname, int wind_size);
     void extract_region_bp(int chr, int bp, int wind_size);
+    // Apply --extract-region-bp during BIM read (M1: avoid loading full-chr indexes).
+    void set_bim_region_filter(int chr, int bp, int wind_bp);
     void exclude_snp(string snplistfile);
     void exclude_single_snp(string snpname);
     void exclude_region_snp(string snpname, int wind_size);
@@ -509,6 +512,13 @@ private:
     vector<double> _rc_rate;
     vector<int> _include; // initialized in the read_bimfile()
     eigenVector _maf;
+    // Region filter applied at BIM read (set by set_bim_region_filter).
+    bool _bim_region_filter = false;
+    int _bim_region_chr = 0;
+    int _bim_region_start = 0;
+    int _bim_region_end = 0;
+    // Original 0-based BED row for each kept BIM SNP (empty = sequential legacy path).
+    vector<uint64_t> _snp_bed_row;
 
     // fam file
     vector<string> _fid;

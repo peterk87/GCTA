@@ -210,9 +210,13 @@ if (NOT APPLE)
     target_link_libraries(gcta64 MKL::MKL)
 endif()
 
-# Testing has some problems currently
-#enable_testing()
-#ADD_SUBDIRECTORY(test)
+# Unit / golden tests (see tests/ and .github/workflows/ci.yml).
+# Standalone unit build (no MKL): cmake -S tests -B build-unit && cmake --build build-unit && ctest --test-dir build-unit
+option(GCTA_BUILD_TESTS "Build and register GCTA/COJO tests" ON)
+if(GCTA_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 IF(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/compile_commands.json")
     EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E copy_if_different

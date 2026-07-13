@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: ShellCheck
+        run: shellcheck --severity=warning scripts/ci/*.sh
+
+      - name: Check Python scripts compile
+        run: |
+          python3 -m py_compile scripts/ci/compare_cojo.py
+          python3 -m py_compile sandbox/2026-07-13-manc-cojo/scripts/compare_cojo.py
+          python3 -m py_compile sandbox/2026-07-13-manc-cojo/scripts/gen_synth_data.py
+
+  unit:
+    name: Unit tests (no MKL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build
+
+      - name: Cache CPM packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CPM_SOURCE_CACHE }}
+          key: cpm-unit-${{ runner.os }}-${{ hashFiles('cmake/CPM.cmake', 'tests/CMakeLists.txt') }}
+          restore-keys: cpm-unit-${{ runner.os }}-
+
+      - name: Configure unit tests
+        run: |
+          cmake -S tests -B build-unit -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCPM_SOURCE_CACHE="${CPM_SOURCE_CACHE}"
+
+      - name: Build unit tests
+        run: cmake --build build-unit --parallel
+
+      - name: Run unit tests
+        run: ctest --test-dir build-unit -L unit --output-on-failure --parallel 4
+
+  build:
+    name: Build gcta64 (MKL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgsl-dev gfortran wget ca-certificates gnupg
+
+      - name: Install Intel oneAPI MKL
+        run: |
+          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mkl-devel
+
+      - name: Cache CPM packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CPM_SOURCE_CACHE }}
+          key: cpm-build-${{ runner.os }}-${{ hashFiles('cmake/CPM.cmake', 'CMakeLists.txt') }}
+          restore-keys: |
+            cpm-build-${{ runner.os }}-
+            cpm-unit-${{ runner.os }}-
+
+      - name: Configure gcta64
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGCTA_BUILD_TESTS=ON \
+            -DMKL_DIR="/opt/intel/oneapi/mkl/latest/lib/cmake/mkl" \
+            -DCPM_SOURCE_CACHE="${CPM_SOURCE_CACHE}"
+
+      - name: Build gcta64
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          cmake --build build --parallel --target gcta64 cojo_unit_tests
+
+      - name: Smoke — gcta64 runs
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          ./build/gcta64 2>&1 | head -20 || true
+          test -x ./build/gcta64
+
+      - name: Upload gcta64 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcta64-linux-x86_64
+          path: build/gcta64
+          if-no-files-found: error
+          retention-days: 7
+
+  golden:
+    name: Golden COJO tests
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download gcta64
+        uses: actions/download-artifact@v8
+        with:
+          name: gcta64-linux-x86_64
+          path: bin
+
+      - name: Install Intel oneAPI MKL runtime
+        run: |
+          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mkl
+
+      - name: Run golden harness
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          chmod +x bin/gcta64 scripts/ci/golden_test.sh
+          # Fixtures + goldens checked in (TESTING_PLAN S1–S2)
+          ./scripts/ci/golden_test.sh --gcta "$(pwd)/bin/gcta64" --tests-dir tests

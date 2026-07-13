@@ -1364,10 +1364,15 @@ void option(int option_num, char* option_str[])
             if (!rm_indi_file.empty()) pter_gcta->remove_indi(rm_indi_file);
             if (!update_sex_file.empty()) pter_gcta->update_sex(update_sex_file);
             if (!blup_indi_file.empty()) pter_gcta->read_indi_blup(blup_indi_file);
+            // M1: apply --extract-region-bp during BIM read to avoid full-chr indexes.
+            if (bfile_flag == 1 && extract_region_chr > 0) {
+                pter_gcta->set_bim_region_filter(extract_region_chr, extract_region_bp, extract_region_wind);
+            }
             if(bfile_flag==1) pter_gcta->read_bimfile(bfile + ".bim");
             else pter_gcta->read_multi_bimfiles(multi_bfiles);
             if (!extract_snp_file.empty()) pter_gcta->extract_snp(extract_snp_file);
             if (extract_chr_start > 0) pter_gcta->extract_chr(extract_chr_start, extract_chr_end);
+            // Still call extract_region_bp after BIM (safe / redundant when filter was set).
             if(extract_region_chr>0) pter_gcta->extract_region_bp(extract_region_chr, extract_region_bp, extract_region_wind);
             if (!extract_snp_name.empty()){
                 if(extract_region_wind>0) pter_gcta->extract_region_snp(extract_snp_name, extract_region_wind);

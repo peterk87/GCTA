@@ -1,0 +1,2 @@
+Chr	SNP	bp	refA	freq	b	se	p	n	freq_geno	bJ	bJ_se	pJ	LD_r
+1	rs_col_0	20000000	A	0.2875	1.31933	0.0693348	9.92451e-81	202.819	0.2875	1.31933	0.11561	3.64866e-30	0
