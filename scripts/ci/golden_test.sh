@@ -75,6 +75,7 @@ normalize() {
     -e '/^Analysis finished at /d' \
     -e '/^Hostname:/d' \
     -e '/^Overall computational time:/d' \
+    -e '/^COJO genotype cache enabled /d' \
     -e '/Saving .* to \[/d' \
     -e 's#--out[[:space:]]+[^[:space:]]+#--out OUTPREFIX#g' \
     -e 's#\[[^]]+/([^/]+\.(cojo|ma|bed|bim|fam|badsnps))\]#[\1]#g' \

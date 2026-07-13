@@ -372,6 +372,9 @@ private:
     void init_Z(const vector<int> &indx);
     bool insert_B_and_Z(const vector<int> &indx, int insert_indx);
     void erase_B_and_Z(const vector<int> &indx, int erase_indx);
+    void build_cojo_bp_order();
+    void cojo_window_bounds(int snp_include_idx, int &lo, int &hi) const;
+    double cojo_snp_dot(int i, int j); // centered LD product / n (uses cache when ready)
     void LD_rval(const vector<int> &indx, eigenMatrix &rval);
     bool massoc_sblup(double lambda, eigenVector &bJ);
     void massoc_slct_output(bool joint_only, vector<int> &slct, eigenVector &bJ, eigenVector &bJ_se, eigenVector &pJ, eigenMatrix &rval);
@@ -634,11 +637,17 @@ private:
     eigenVector _MSX_B;
     eigenSparseMat _B_N;
     eigenSparseMat _B;
-    eigenSparseMat _B_N_i;
-    eigenSparseMat _B_i;
+    // Dense inverses of _B / _B_N (M2: maintained by rank-1 updates in insert/erase).
+    eigenMatrix _B_N_i;
+    eigenMatrix _B_i;
     eigenVector _D_N;
     eigenSparseMat _Z_N;
     eigenSparseMat _Z;
+    // M3: _include indices sorted by bp (same chr assumed within COJO window ops).
+    vector<int> _bp_order;
+    // M4: optional centered genotype cache for _include (columns); empty if too large.
+    eigenMatrix _cojo_X;
+    bool _cojo_X_ready = false;
     double g_massoc_out_thresh = -1.0;
     double _diff_freq = 0.2;
     

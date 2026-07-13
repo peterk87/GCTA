@@ -11,6 +11,91 @@
  */
 
 #include "gcta.h"
+#include <algorithm>
+#include <vector>
+
+namespace {
+
+// Rank-1 block-inverse update when appending a row/col to an SPD matrix.
+// R_new = [ R , c ; c' , d ], given R_inv = R^{-1}.
+void inv_update_forward_append(const eigenMatrix &R_inv, const eigenVector &c, double d,
+                               eigenMatrix &R_inv_out)
+{
+    const int k = static_cast<int>(R_inv.rows());
+    if (k == 0) {
+        R_inv_out.resize(1, 1);
+        R_inv_out(0, 0) = 1.0 / d;
+        return;
+    }
+    eigenVector v = R_inv * c;
+    const double denom = d - c.dot(v);
+    const double s = 1.0 / denom;
+    R_inv_out.resize(k + 1, k + 1);
+    R_inv_out.topLeftCorner(k, k) = R_inv + s * v * v.transpose();
+    R_inv_out.topRightCorner(k, 1) = -s * v;
+    R_inv_out.bottomLeftCorner(1, k) = -s * v.transpose();
+    R_inv_out(k, k) = s;
+}
+
+// Move last row/col to position `pos` (used after append-at-end to match sorted SNP order).
+eigenMatrix move_last_to_pos(const eigenMatrix &M, int pos)
+{
+    const int n = static_cast<int>(M.rows());
+    if (pos < 0 || pos >= n || pos == n - 1) return M;
+    eigenMatrix R(n, n);
+    // new row i comes from old index src[i]
+    for (int i = 0; i < n; i++) {
+        const int si = (i < pos) ? i : (i == pos ? n - 1 : i - 1);
+        for (int j = 0; j < n; j++) {
+            const int sj = (j < pos) ? j : (j == pos ? n - 1 : j - 1);
+            R(i, j) = M(si, sj);
+        }
+    }
+    return R;
+}
+
+// Rank-1 downdate removing row/col `pos`.
+void inv_update_backward(const eigenMatrix &R_inv, int pos, eigenMatrix &R_inv_out)
+{
+    const int n = static_cast<int>(R_inv.rows());
+    if (n <= 1) {
+        R_inv_out.resize(0, 0);
+        return;
+    }
+    eigenMatrix tmp =
+        R_inv - R_inv.col(pos) * R_inv.row(pos) / R_inv(pos, pos);
+    R_inv_out.resize(n - 1, n - 1);
+    int ii = 0;
+    for (int i = 0; i < n; i++) {
+        if (i == pos) continue;
+        int jj = 0;
+        for (int j = 0; j < n; j++) {
+            if (j == pos) continue;
+            R_inv_out(ii, jj) = tmp(i, j);
+            jj++;
+        }
+        ii++;
+    }
+}
+
+// Extract off-diagonal column of lower-triangular sparse B at `pos`, skipping the diagonal,
+// in order of the other indices (i.e. old sorted order).
+eigenVector extract_sparse_col_excl_diag(const eigenSparseMat &B, int pos, int n)
+{
+    eigenVector c(n - 1);
+    int t = 0;
+    for (int i = 0; i < n; i++) {
+        if (i == pos) continue;
+        if (i > pos)
+            c[t] = B.coeff(i, pos);
+        else
+            c[t] = B.coeff(pos, i);
+        t++;
+    }
+    return c;
+}
+
+}  // namespace
 
 void gcta::set_diff_freq(double freq_diff){
     _diff_freq = freq_diff;
@@ -201,11 +286,26 @@ void gcta::init_massoc(string metafile, bool GC, double GC_val)
     _Nd.resize(m);
 
     if (_mu.empty()) calcu_mu();
+
+    // M4: cache centered genotypes for COJO LD when footprint is modest (post-M1 regions).
+    const size_t cells = static_cast<size_t>(n) * static_cast<size_t>(m);
+    const size_t max_cells = 40ull << 20; // ~40M doubles ≈ 320MB
+    _cojo_X_ready = false;
+    _cojo_X.resize(0, 0);
+    if (cells > 0 && cells <= max_cells) {
+        _cojo_X.resize(n, m);
+        _cojo_X_ready = true;
+    }
+
     #pragma omp parallel for
     for (i = 0; i < m; i++){
         eigenVector x;
         makex_eigenVector(i, x, true, true);
         _MSX_B[i] = x.squaredNorm() / (double)n;
+        if (_cojo_X_ready) _cojo_X.col(i) = x;
+    }
+    if (_cojo_X_ready) {
+        LOGGER << "COJO genotype cache enabled (" << m << " SNPs × " << n << " individuals)." << endl;
     }
     if (_jma_actual_geno) {
         _MSX = _MSX_B;
@@ -214,6 +314,72 @@ void gcta::init_massoc(string metafile, bool GC, double GC_val)
         _MSX = 2.0 * _freq.array()*(1.0 - _freq.array());
         for (i = 0; i < m; i++) _Nd[i] = (_jma_Vp - _MSX[i] * _beta[i] * _beta[i]) / (_MSX[i] * _beta_se[i] * _beta_se[i]) + 1; // revised by JY 25/11/13 according to Eq. 13, Yang et al. 2012 NG
     }
+    build_cojo_bp_order();
+}
+
+double gcta::cojo_snp_dot(int i, int j)
+{
+    const int n = static_cast<int>(_keep.size());
+    if (_cojo_X_ready) {
+        return _cojo_X.col(i).dot(_cojo_X.col(j)) / (double)n;
+    }
+    eigenVector x_i, x_j;
+    makex_eigenVector(i, x_i, true, true);
+    makex_eigenVector(j, x_j, true, true);
+    return x_i.dot(x_j) / (double)n;
+}
+
+void gcta::build_cojo_bp_order()
+{
+    const int m = static_cast<int>(_include.size());
+    _bp_order.resize(m);
+    for (int i = 0; i < m; i++) _bp_order[i] = i;
+    std::stable_sort(_bp_order.begin(), _bp_order.end(), [&](int a, int b) {
+        const int ca = _chr[_include[a]], cb = _chr[_include[b]];
+        if (ca != cb) return ca < cb;
+        return _bp[_include[a]] < _bp[_include[b]];
+    });
+}
+
+void gcta::cojo_window_bounds(int snp_include_idx, int &lo, int &hi) const
+{
+    // Half-open [lo, hi) into _bp_order for SNPs with abs(bp diff) < _jma_wind_size on same chr.
+    const int m = static_cast<int>(_bp_order.size());
+    lo = 0;
+    hi = m;
+    if (m == 0 || snp_include_idx < 0 || snp_include_idx >= (int)_include.size()) return;
+    const int chr = _chr[_include[snp_include_idx]];
+    const int bp = _bp[_include[snp_include_idx]];
+
+    int c_lo = 0, c_hi = m;
+    while (c_lo < m && _chr[_include[_bp_order[c_lo]]] < chr) c_lo++;
+    c_hi = c_lo;
+    while (c_hi < m && _chr[_include[_bp_order[c_hi]]] == chr) c_hi++;
+    if (c_lo == c_hi) {
+        lo = hi = c_lo;
+        return;
+    }
+
+    // abs(bp_j - bp) < wind  <=>  bp - wind < bp_j < bp + wind
+    const int left = bp - _jma_wind_size + 1; // first bp that can be included
+    const int right = bp + _jma_wind_size - 1;
+    auto bp_of = [&](int ord) { return _bp[_include[_bp_order[ord]]]; };
+
+    int L = c_lo, R = c_hi;
+    while (L < R) {
+        int mid = (L + R) / 2;
+        if (bp_of(mid) < left) L = mid + 1;
+        else R = mid;
+    }
+    lo = L;
+    L = c_lo;
+    R = c_hi;
+    while (L < R) {
+        int mid = (L + R) / 2;
+        if (bp_of(mid) <= right) L = mid + 1;
+        else R = mid;
+    }
+    hi = L;
 }
 
 void gcta::read_fixed_snp(string snplistfile, string msg, vector<int> &pgiven, vector<int> &remain) {
@@ -613,7 +779,6 @@ bool gcta::init_B(const vector<int> &indx)
     _B.resize(indx.size(), indx.size());
     _B_N.resize(indx.size(), indx.size());
     _D_N.resize(indx.size());
-    eigenVector x_i(_keep.size()), x_j(_keep.size());
     for (i = 0; i < indx.size(); i++) {
         _D_N[i] = _MSX[indx[i]] * _Nd[indx[i]];
         _B.startVec(i);
@@ -621,11 +786,9 @@ bool gcta::init_B(const vector<int> &indx)
         _B.insertBack(i, i) = _MSX_B[indx[i]];
         _B_N.insertBack(i, i) = _D_N[i];
         diagB[i] = _MSX_B[indx[i]];
-        makex_eigenVector(indx[i], x_i, false, true);
         for (j = i + 1; j < indx.size(); j++) {
             if (_jma_actual_geno || (_chr[_include[indx[i]]] == _chr[_include[indx[j]]] && abs(_bp[_include[indx[i]]] - _bp[_include[indx[j]]]) < _jma_wind_size)) {
-                makex_eigenVector(indx[j], x_j, false, true);
-                d_buf = x_i.dot(x_j) / (double)n;
+                d_buf = cojo_snp_dot(indx[i], indx[j]);
                 _B.insertBack(j, i) = d_buf;
                 _B_N.insertBack(j, i) = d_buf * min(_Nd[indx[i]], _Nd[indx[j]]) * sqrt(_MSX[indx[i]] * _MSX[indx[j]] / (_MSX_B[indx[i]] * _MSX_B[indx[j]]));
             }
@@ -660,15 +823,26 @@ void gcta::init_Z(const vector<int> &indx)
     double d_buf = 0.0;
     _Z.resize(indx.size(), _include.size());
     _Z_N.resize(indx.size(), _include.size());
-    eigenVector x_i(_keep.size()), x_j(_keep.size());
+
+    // M3: only SNPs inside any selected SNP's bp window need genotype dots.
+    vector<char> in_window(_include.size(), 0);
+    if (_jma_actual_geno) {
+        std::fill(in_window.begin(), in_window.end(), 1);
+    } else {
+        for (i = 0; i < (int)indx.size(); i++) {
+            int lo = 0, hi = 0;
+            cojo_window_bounds(indx[i], lo, hi);
+            for (int t = lo; t < hi; t++) in_window[_bp_order[t]] = 1;
+        }
+    }
+
     for (j = 0; j < _include.size(); j++) {
         _Z.startVec(j);
         _Z_N.startVec(j);
-        makex_eigenVector(j, x_j, false, true);
+        if (!in_window[j]) continue;
         for (i = 0; i < indx.size(); i++) {
             if (_jma_actual_geno || (indx[i] != j && _chr[_include[indx[i]]] == _chr[_include[j]] && abs(_bp[_include[indx[i]]] - _bp[_include[j]]) < _jma_wind_size)) {
-                makex_eigenVector(indx[i], x_i, false, true);
-                d_buf = x_j.dot(x_i) / (double)n;
+                d_buf = cojo_snp_dot(j, indx[i]);
                 _Z.insertBack(i, j) = d_buf;
                 _Z_N.insertBack(i, j) = d_buf * min(_Nd[indx[i]], _Nd[j]) * sqrt(_MSX[indx[i]] * _MSX[j] / (_MSX_B[indx[i]] * _MSX_B[j])); // added by Jian Yang 18/12/2013
             }
@@ -696,7 +870,6 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
     bool get_insert_col = false, get_insert_row = false;
     int pos = find(ix.begin(), ix.end(), insert_indx) - ix.begin();
     eigenVector diagB(ix.size());
-    eigenVector x_i(_keep.size()), x_j(_keep.size());
     for (j = 0; j < ix.size(); j++) {
         _B.startVec(j);
         _B_N.startVec(j);
@@ -705,13 +878,11 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
         diagB[j] = _MSX_B[ix[j]];
         if (insert_indx == ix[j]) get_insert_col = true;
         get_insert_row = get_insert_col;
-        makex_eigenVector(ix[j], x_j, false, true);
         for (i = j + 1; i < ix.size(); i++) {
             if (insert_indx == ix[i]) get_insert_row = true;
             if (insert_indx == ix[j] || insert_indx == ix[i]) {
                 if (_jma_actual_geno || (_chr[_include[ix[i]]] == _chr[_include[ix[j]]] && abs(_bp[_include[ix[i]]] - _bp[_include[ix[j]]]) < _jma_wind_size)) {
-                    makex_eigenVector(ix[i], x_i, false, true);
-                    d_buf = x_i.dot(x_j) / (double)n;
+                    d_buf = cojo_snp_dot(ix[i], ix[j]);
                     _B.insertBack(i, j) = d_buf;
                     _B_N.insertBack(i, j) = d_buf * min(_Nd[ix[i]], _Nd[ix[j]]) * sqrt(_MSX[ix[i]] * _MSX[ix[j]] / (_MSX_B[ix[i]] * _MSX_B[ix[j]]));
                 }
@@ -725,20 +896,55 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
     }
     _B.finalize();
     _B_N.finalize();
-    SimplicialLDLT<eigenSparseMat> ldlt_B(_B);
-    _B_i.resize(ix.size(), ix.size());
-    _B_i.setIdentity();
-    _B_i = ldlt_B.solve(_B_i).eval();
-    if (ldlt_B.vectorD().minCoeff() < 0 || sqrt(ldlt_B.vectorD().maxCoeff() / ldlt_B.vectorD().minCoeff()) > 30 || (1 - eigenVector::Constant(ix.size(), 1).array() / (diagB.array() * _B_i.diagonal().array())).maxCoeff() > _jma_collinear) {
-        _jma_snpnum_collienar++;
-        _B = B_buf;
-        _B_N = B_N_buf;
-        return false;
+
+    // M2: rank-1 inverse update when a prior inverse matches the pre-insert selection.
+    // Fall back to LDLT when sizes don't match (first build after init_B edge cases).
+    const bool can_incr = (_B_i.rows() == (int)indx.size() && _B_i.cols() == (int)indx.size()
+                           && _B_N_i.rows() == (int)indx.size() && _B_N_i.cols() == (int)indx.size()
+                           && indx.size() > 0);
+    eigenMatrix B_i_buf = _B_i;
+    eigenMatrix B_N_i_buf = _B_N_i;
+
+    if (can_incr) {
+        const int n_new = static_cast<int>(ix.size());
+        eigenVector cB = extract_sparse_col_excl_diag(_B, pos, n_new);
+        eigenVector cBN = extract_sparse_col_excl_diag(_B_N, pos, n_new);
+        const double dB = _MSX_B[insert_indx];
+        const double dBN = _MSX[insert_indx] * _Nd[insert_indx];
+
+        eigenMatrix B_i_app, B_N_i_app;
+        inv_update_forward_append(B_i_buf, cB, dB, B_i_app);
+        inv_update_forward_append(B_N_i_buf, cBN, dBN, B_N_i_app);
+        _B_i = move_last_to_pos(B_i_app, pos);
+        _B_N_i = move_last_to_pos(B_N_i_app, pos);
+
+        // GCTA collinearity test on the correlation-scale inverse diagonal.
+        if ((1 - eigenVector::Constant(ix.size(), 1).array() / (diagB.array() * _B_i.diagonal().array())).maxCoeff() > _jma_collinear) {
+            _jma_snpnum_collienar++;
+            _B = B_buf;
+            _B_N = B_N_buf;
+            _B_i = B_i_buf;
+            _B_N_i = B_N_i_buf;
+            return false;
+        }
+    } else {
+        SimplicialLDLT<eigenSparseMat> ldlt_B(_B);
+        _B_i.resize(ix.size(), ix.size());
+        _B_i.setIdentity();
+        _B_i = ldlt_B.solve(_B_i).eval();
+        if (ldlt_B.vectorD().minCoeff() < 0 || sqrt(ldlt_B.vectorD().maxCoeff() / ldlt_B.vectorD().minCoeff()) > 30 || (1 - eigenVector::Constant(ix.size(), 1).array() / (diagB.array() * _B_i.diagonal().array())).maxCoeff() > _jma_collinear) {
+            _jma_snpnum_collienar++;
+            _B = B_buf;
+            _B_N = B_N_buf;
+            _B_i = B_i_buf;
+            _B_N_i = B_N_i_buf;
+            return false;
+        }
+        SimplicialLDLT<eigenSparseMat> ldlt_B_N(_B_N);
+        _B_N_i.resize(ix.size(), ix.size());
+        _B_N_i.setIdentity();
+        _B_N_i = ldlt_B_N.solve(_B_N_i).eval();
     }
-    SimplicialLDLT<eigenSparseMat> ldlt_B_N(_B_N);
-    _B_N_i.resize(ix.size(), ix.size());
-    _B_N_i.setIdentity();
-    _B_N_i = ldlt_B_N.solve(_B_N_i).eval();
     _D_N.resize(ix.size());
     for (j = 0; j < ix.size(); j++) {
         _D_N[j] = _MSX[ix[j]] * _Nd[ix[j]];
@@ -748,16 +954,25 @@ bool gcta::insert_B_and_Z(const vector<int> &indx, int insert_indx)
     eigenSparseMat Z_buf(_Z), Z_N_buf(_Z_N);
     _Z.resize(ix.size(), _include.size());
     _Z_N.resize(ix.size(), _include.size());
+
+    // M3: compute the new selected row only inside the bp window of insert_indx.
+    vector<char> in_window(_include.size(), 0);
+    if (_jma_actual_geno) {
+        std::fill(in_window.begin(), in_window.end(), 1);
+    } else {
+        int lo = 0, hi = 0;
+        cojo_window_bounds(insert_indx, lo, hi);
+        for (int t = lo; t < hi; t++) in_window[_bp_order[t]] = 1;
+    }
+
     for (j = 0; j < _include.size(); j++) {
         _Z.startVec(j);
         _Z_N.startVec(j);
         get_insert_row = false;
-        makex_eigenVector(j, x_j, false, true);
         for (i = 0; i < ix.size(); i++) {
             if (insert_indx == ix[i]) {
-                if (_jma_actual_geno || (ix[i] != j && _chr[_include[ix[i]]] == _chr[_include[j]] && abs(_bp[_include[ix[i]]] - _bp[_include[j]]) < _jma_wind_size)) {
-                    makex_eigenVector(ix[i], x_i, false, true);
-                    d_buf = x_j.dot(x_i) / (double)n;
+                if (in_window[j] && (_jma_actual_geno || (ix[i] != j && _chr[_include[ix[i]]] == _chr[_include[j]] && abs(_bp[_include[ix[i]]] - _bp[_include[j]]) < _jma_wind_size))) {
+                    d_buf = cojo_snp_dot(j, insert_indx);
                     _Z.insertBack(i, j) = d_buf;
                     _Z_N.insertBack(i, j) = d_buf * min(_Nd[ix[i]], _Nd[j]) * sqrt(_MSX[ix[i]] * _MSX[j] / (_MSX_B[ix[i]] * _MSX_B[j])); // added by Jian Yang 18/12/2013
                 }
@@ -807,20 +1022,32 @@ void gcta::erase_B_and_Z(const vector<int> &indx, int erase_indx) {
     _B.finalize();
     _B_N.finalize();
 
-    if (_Z_N.cols() < 1) return;
-
-    _B_i.resize(indx.size() - 1, indx.size() - 1);
-    _B_i.setIdentity();
-    _B_N_i.resize(indx.size() - 1, indx.size() - 1);
-    _B_N_i.setIdentity();
-    if (indx.size() > 1) {
-        SimplicialLDLT<eigenSparseMat> ldlt_B(_B);
-        _B_i = ldlt_B.solve(_B_i).eval();
-        SimplicialLDLT<eigenSparseMat> ldlt_B_N(_B_N);
-        _B_N_i = ldlt_B_N.solve(_B_N_i).eval();
+    // M2: rank-1 downdate of inverses when sizes match; else LDLT rebuild.
+    // Always refresh inverses (even if _Z was never built) so backward elimination stays consistent.
+    const bool can_decr = (_B_i.rows() == (int)indx.size() && _B_i.cols() == (int)indx.size()
+                           && _B_N_i.rows() == (int)indx.size() && _B_N_i.cols() == (int)indx.size()
+                           && indx.size() > 0);
+    if (can_decr) {
+        eigenMatrix B_i_new, B_N_i_new;
+        inv_update_backward(_B_i, pos, B_i_new);
+        inv_update_backward(_B_N_i, pos, B_N_i_new);
+        _B_i.swap(B_i_new);
+        _B_N_i.swap(B_N_i_new);
+    } else {
+        _B_i.resize(indx.size() - 1, indx.size() - 1);
+        _B_i.setIdentity();
+        _B_N_i.resize(indx.size() - 1, indx.size() - 1);
+        _B_N_i.setIdentity();
+        if (indx.size() > 1) {
+            SimplicialLDLT<eigenSparseMat> ldlt_B(_B);
+            _B_i = ldlt_B.solve(_B_i).eval();
+            SimplicialLDLT<eigenSparseMat> ldlt_B_N(_B_N);
+            _B_N_i = ldlt_B_N.solve(_B_N_i).eval();
+        }
     }
 
- 
+    if (_Z_N.cols() < 1) return;
+
     if (indx.size() > 1) {
         eigenSparseMat Z_buf(_Z), Z_N_buf(_Z_N);
         _Z.resize(indx.size() - 1, _include.size());

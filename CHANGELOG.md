@@ -29,10 +29,14 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 ### Changed
 
 - **COJO / PLINK I/O (M1):** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM per LD-block process).
+- **COJO stepwise (M2):** `insert_B_and_Z` / `erase_B_and_Z` maintain dense `_B_i` / `_B_N_i` with rank-1 Schur updates (append-then-permute for sorted SNP order) instead of rebuilding via `SimplicialLDLT` each step; GCTA diagonal collinearity test retained.
+- **COJO LD fill (M3):** `_bp_order` + window bounds restrict `init_Z` / insert-Z genotype dots to SNPs within `--cojo-wind`.
+- **COJO genotype dots (M4):** optional centered genotype cache (`_cojo_X`, capped ~320MB) reused by `cojo_snp_dot` so LD products avoid rematerializing from `vector<bool>` bit genotypes.
 
 ### Fixed
 
 - Golden harness no longer aborts the whole run on the first `DIFFERENT` comparator under `set -euo pipefail` (exit codes captured via `if txt=$(…)`).
+- `erase_B_and_Z` always refreshes inverses (even when `_Z` was never built).
 
 ---
 
