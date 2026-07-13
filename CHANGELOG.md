@@ -45,11 +45,11 @@ Illustrative COJO timings on a large chromosome (8M panel SNPs, 5k LD-reference 
 | Full-chromosome `--cojo-slct` (4 threads; load all panel genotypes) | NA (not run) | ~5 min · ~14 GiB | Full-chr becomes practical |
 | Same, deferred genotype load (decode `.ma`∩panel SNPs only) | — | ~3.7 min · ~6.3 GiB | **~2.2×** lower peak RSS vs eager `1.96.0`; joint-SNP set equivalent @ 1e-6 |
 
-The v1.94.1 figure is end-to-end wall for subsetted COJO (including orchestration around subsets). The `1.96.0` LD-block figure uses the same subsetting pattern with the region-scoped I/O and other COJO speedups in this release. Full-chromosome COJO and deferred genotype load are new options here.
+The v1.94.1 figure is end-to-end wall for subsetted COJO (including orchestration around subsets). The `1.96.0` subsetting figure uses the same subsetting pattern with the region-scoped I/O and other COJO speedups in this release. Full-chromosome COJO and deferred genotype load are new options here.
 
 ### Changed
 
-- **COJO / PLINK I/O:** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM per LD-block process).
+- **COJO / PLINK I/O:** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM when only a small region is being processed).
 - **COJO deferred genotype load:** for single-bfile `--cojo-slct` / `--cojo-joint` / `--cojo-cond` / `--cojo-sblup` (without `--update-freq` / dosage Rsq filters), BIM records BED row indices and genotypes are decoded only for `.ma`∩panel SNPs inside `init_massoc`, then `--maf` / `--max-maf` are applied — avoids materializing the full-chromosome BED for full-chr COJO.
 - **COJO MA match:** with the BIM region filter active, `.ma` lines outside the region index are skipped early (phenotypic-variance median still uses all lines for parity).
 - **COJO stepwise:** `insert_B_and_Z` / `erase_B_and_Z` maintain dense `_B_i` / `_B_N_i` with rank-1 Schur updates (append-then-permute for sorted SNP order) instead of rebuilding via `SimplicialLDLT` each step; incremental insert keeps stock’s three guards (Schur/`denom>0`, LDLT `cond(D)>30`, per-SNP collinearity).
