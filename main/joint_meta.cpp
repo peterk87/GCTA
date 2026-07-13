@@ -104,6 +104,54 @@ eigenVector extract_sparse_col_excl_diag(const eigenSparseMat &B, int pos, int n
 void gcta::set_diff_freq(double freq_diff){
     _diff_freq = freq_diff;
 }
+
+void gcta::prepare_deferred_geno_for_cojo(const string &metafile)
+{
+    if (!_deferred_geno_load) return;
+    if (_deferred_bedfile.empty()) LOGGER.e(0, "internal error: deferred BED path is empty.");
+    if (_snp_bed_row.empty()) {
+        LOGGER.e(0, "internal error: deferred genotype load requires BED row indexing (enable_bed_row_tracking).");
+    }
+
+    LOGGER << "Deferred genotype load for COJO: indexing .ma against panel before BED decode ..." << endl;
+    ifstream Meta(metafile.c_str());
+    if (!Meta) LOGGER.e(0, "cannot open the file [" + metafile + "] to read.");
+
+    string str_buf, snp_buf, A1_buf, A2_buf;
+    vector<string> vs_buf, candidates;
+    candidates.reserve(std::min<size_t>(_include.size(), 1 << 20));
+    map<string, int>::iterator iter;
+    getline(Meta, str_buf); // header
+    if (StrFunc::split_string(str_buf, vs_buf) < 7) LOGGER.e(0, "format error in the input file [" + metafile + "].");
+    size_t ma_rows = 0, in_panel = 0;
+    while (Meta) {
+        Meta >> snp_buf;
+        if (Meta.eof()) break;
+        Meta >> A1_buf >> A2_buf;
+        getline(Meta, str_buf); // rest of line
+        ma_rows++;
+        iter = _snp_name_map.find(snp_buf);
+        if (iter == _snp_name_map.end()) continue;
+        candidates.push_back(snp_buf);
+        in_panel++;
+    }
+    Meta.close();
+    LOGGER << "Deferred COJO: " << ma_rows << " .ma rows, " << in_panel
+           << " SNP IDs present in the current panel index." << endl;
+    if (candidates.empty()) LOGGER.e(0, "none of the SNPs in the GWAS summary data can be found in the genotype data.");
+
+    update_id_map_kp(candidates, _snp_name_map, _include);
+    LOGGER << "Deferred COJO: loading genotypes for " << _include.size()
+           << " panel SNPs from [" << _deferred_bedfile << "] ..." << endl;
+    read_bedfile(_deferred_bedfile);
+
+    if (_deferred_maf > 0) filter_snp_maf(_deferred_maf);
+    if (_deferred_max_maf > 0.0) filter_snp_max_maf(_deferred_max_maf);
+
+    _deferred_geno_load = false;
+    LOGGER << "Deferred COJO: genotype load complete (" << _include.size() << " SNPs retained)." << endl;
+}
+
 void gcta::read_metafile(string metafile, bool GC, double GC_val) {
     double freq_diff_thresh = _diff_freq;
     LOGGER << "\nReading GWAS summary-level statistics from [" + metafile + "] ..." << endl;
@@ -326,6 +374,7 @@ void gcta::read_metafile(string metafile, bool GC, double GC_val) {
 
 void gcta::init_massoc(string metafile, bool GC, double GC_val)
 {
+    prepare_deferred_geno_for_cojo(metafile);
     read_metafile(metafile, GC, GC_val);
 
     int i = 0, j = 0, n = _keep.size(), m = _include.size();

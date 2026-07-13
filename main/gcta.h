@@ -89,6 +89,10 @@ public:
     void extract_region_bp(int chr, int bp, int wind_size);
     // Apply --extract-region-bp during BIM read so only in-region SNPs are indexed.
     void set_bim_region_filter(int chr, int bp, int wind_bp);
+    // Track original BED row for every kept BIM SNP (needed for deferred / non-contiguous BED loads).
+    void enable_bed_row_tracking(bool enable = true);
+    // COJO: skip eager BED; after .ma∩BIM known, decode only those SNPs then apply MAF.
+    void set_deferred_geno_load(const string &bedfile, double maf, double max_maf);
     void exclude_snp(string snplistfile);
     void exclude_single_snp(string snpname);
     void exclude_region_snp(string snpname, int wind_size);
@@ -356,6 +360,8 @@ private:
     // Joint analysis of GWAS MA results
     void read_metafile(string metafile, bool GC, double GC_val);
     void init_massoc(string metafile, bool GC, double GC_val);
+    // Scan .ma for panel-overlapping SNP IDs, selective BED decode, then MAF (deferred geno path).
+    void prepare_deferred_geno_for_cojo(const string &metafile);
     void read_fixed_snp(string snplistfile, string msg, vector<int> &pgiven, vector<int> &remain);
     void eigenVector2Vector(eigenVector &x, vector<double> &y);
     //double crossprod(int indx1, int indx2);
@@ -527,8 +533,15 @@ private:
     int _bim_region_chr = 0;
     int _bim_region_start = 0;
     int _bim_region_end = 0;
+    // When true (or region filter), record original BED row per kept BIM SNP.
+    bool _track_bed_row = false;
     // Original 0-based BED row for each kept BIM SNP (empty = sequential legacy path).
     vector<uint64_t> _snp_bed_row;
+    // Deferred genotype load for COJO (decode BED after .ma ∩ BIM is known).
+    bool _deferred_geno_load = false;
+    string _deferred_bedfile;
+    double _deferred_maf = 0.0;
+    double _deferred_max_maf = 0.0;
 
     // fam file
     vector<string> _fid;

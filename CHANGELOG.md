@@ -29,6 +29,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 ### Changed
 
 - **COJO / PLINK I/O:** `--extract-region-bp` is applied during BIM read (`set_bim_region_filter`) so only in-region SNPs are indexed; BED rows are sought via `_snp_bed_row` (avoids loading a full-chromosome BIM per LD-block process).
+- **COJO deferred genotype load:** for single-bfile `--cojo-slct` / `--cojo-joint` / `--cojo-cond` / `--cojo-sblup` (without `--update-freq` / dosage Rsq filters), BIM records BED row indices and genotypes are decoded only for `.ma`∩panel SNPs inside `init_massoc`, then `--maf` / `--max-maf` are applied — avoids materializing the full-chromosome BED for full-chr COJO.
 - **COJO MA match:** with the BIM region filter active, `.ma` lines outside the region index are skipped early (phenotypic-variance median still uses all lines for parity).
 - **COJO stepwise:** `insert_B_and_Z` / `erase_B_and_Z` maintain dense `_B_i` / `_B_N_i` with rank-1 Schur updates (append-then-permute for sorted SNP order) instead of rebuilding via `SimplicialLDLT` each step; incremental insert keeps stock’s three guards (Schur/`denom>0`, LDLT `cond(D)>30`, per-SNP collinearity).
 - **COJO LD fill:** `_bp_order` + window bounds restrict `init_Z` / insert-Z genotype dots to SNPs within `--cojo-wind`.

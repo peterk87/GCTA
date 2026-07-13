@@ -150,6 +150,20 @@ void gcta::set_bim_region_filter(int chr, int bp, int wind_bp)
     if (_bim_region_start < 0) _bim_region_start = 0;
 }
 
+void gcta::enable_bed_row_tracking(bool enable)
+{
+    _track_bed_row = enable;
+}
+
+void gcta::set_deferred_geno_load(const string &bedfile, double maf, double max_maf)
+{
+    _deferred_geno_load = true;
+    _deferred_bedfile = bedfile;
+    _deferred_maf = maf;
+    _deferred_max_maf = max_maf;
+    _track_bed_row = true;
+}
+
 void gcta::read_bimfile(string bimfile) {
     // Read bim file: recombination rate is defined between SNP i and SNP i-1
     int ibuf = 0;
@@ -163,6 +177,7 @@ void gcta::read_bimfile(string bimfile) {
         LOGGER << "Applying region filter at BIM read: chr=" << _bim_region_chr
                << " bp=[" << _bim_region_start << "," << _bim_region_end << "]." << endl;
     }
+    const bool record_bed_row = _bim_region_filter || _track_bed_row;
     _chr.clear();
     _snp_name.clear();
     _genet_dst.clear();
@@ -195,7 +210,7 @@ void gcta::read_bimfile(string bimfile) {
             _bp.push_back(bp_val);
             _allele1.push_back(a1);
             _allele2.push_back(a2);
-            if (_bim_region_filter) _snp_bed_row.push_back(bed_row);
+            if (record_bed_row) _snp_bed_row.push_back(bed_row);
         }
         bed_row++;
     }

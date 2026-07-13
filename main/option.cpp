@@ -1372,6 +1372,17 @@ void option(int option_num, char* option_str[])
             if (!rm_indi_file.empty()) pter_gcta->remove_indi(rm_indi_file);
             if (!update_sex_file.empty()) pter_gcta->update_sex(update_sex_file);
             if (!blup_indi_file.empty()) pter_gcta->read_indi_blup(blup_indi_file);
+            // COJO on a single PLINK dataset: decode BED only for .ma∩BIM SNPs, then apply MAF.
+            // Fall back to eager BED when AF/Rsq updates need genotypes first, or multi-bfile / mtcojo.
+            const bool cojo_analysis = massoc_slct_flag || massoc_joint_flag
+                || !massoc_cond_snplist.empty() || massoc_sblup_flag;
+            const bool cojo_defer_geno = cojo_analysis && bfile_flag == 1 && !mtcojo_flag
+                && update_freq_file.empty() && update_impRsq_file.empty()
+                && dose_Rsq_cutoff <= 0.0;
+            if (cojo_defer_geno) {
+                LOGGER << "COJO deferred genotype load: indexing BIM (with BED row map); BED decode deferred until .ma∩BIM." << endl;
+                pter_gcta->enable_bed_row_tracking(true);
+            }
             // Apply --extract-region-bp during BIM read to avoid full-chr indexes.
             if (bfile_flag == 1 && extract_region_chr > 0) {
                 pter_gcta->set_bim_region_filter(extract_region_chr, extract_region_bp, extract_region_wind);
@@ -1401,15 +1412,22 @@ void option(int option_num, char* option_str[])
                 else pter_gcta->read_multi_bedfiles(multi_bfiles);
             }
             if(!mtcojo_flag){
-                if(bfile_flag==1) pter_gcta->read_bedfile(bfile + ".bed");
-                else pter_gcta->read_multi_bedfiles(multi_bfiles);
+                if (cojo_defer_geno) {
+                    pter_gcta->set_deferred_geno_load(bfile + ".bed", maf, max_maf);
+                } else if(bfile_flag==1) {
+                    pter_gcta->read_bedfile(bfile + ".bed");
+                } else {
+                    pter_gcta->read_multi_bedfiles(multi_bfiles);
+                }
             }
 
             if (!update_impRsq_file.empty()) pter_gcta->update_impRsq(update_impRsq_file);
             if (!update_freq_file.empty()) pter_gcta->update_freq(update_freq_file);
             if (dose_Rsq_cutoff > 0.0) pter_gcta->filter_impRsq(dose_Rsq_cutoff);
-            if (maf > 0) pter_gcta->filter_snp_maf(maf);
-            if (max_maf > 0.0) pter_gcta->filter_snp_max_maf(max_maf);
+            if (!cojo_defer_geno) {
+                if (maf > 0) pter_gcta->filter_snp_maf(maf);
+                if (max_maf > 0.0) pter_gcta->filter_snp_max_maf(max_maf);
+            }
             if (out_freq_flag) pter_gcta->save_freq(out_ssq_flag);
             else if (!paa_file.empty()) pter_gcta->paa(paa_file);
             else if (ibc) pter_gcta->ibc(ibc_all);

@@ -81,6 +81,9 @@ normalize() {
     -e '/^MA region match: /d' \
     -e '/Applying region filter at BIM read:/d' \
     -e '/SNPs in region kept from /d' \
+    -e '/^COJO deferred genotype load:/d' \
+    -e '/^Deferred genotype load for COJO:/d' \
+    -e '/^Deferred COJO:/d' \
     -e '/Saving .* to \[/d' \
     -e 's#--out[[:space:]]+[^[:space:]]+#--out OUTPREFIX#g' \
     -e 's#\[[^]]+/([^/]+\.(cojo|ma|bed|bim|fam|badsnps))\]#[\1]#g' \
