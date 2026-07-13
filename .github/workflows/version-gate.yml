@@ -1,0 +1,56 @@
+name: Version gate
+
+# PRs into main that touch the shipped binary / build / changelog must bump
+# GCTA_VERSION in src/config.h and include a matching CHANGELOG.md section.
+# Mark this job as a required status check in branch protection for main.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: version-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-bump:
+    name: Version bumped vs tags
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags origin
+
+      - name: Detect release-affecting changes
+        id: changes
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.sha }}"
+          mapfile -t files < <(git diff --name-only "$base" "$head")
+          affects=false
+          pattern='^(src/|main/|include/|third_party/|CMakeLists\.txt|cmake/|CHANGELOG\.md|src/config\.h|scripts/ci/(gcta_version|package_static_release|merge_github_release_notes))'
+          for f in "${files[@]}"; do
+            if [[ "$f" =~ $pattern ]]; then
+              affects=true
+              break
+            fi
+          done
+          echo "affects_release=${affects}" >> "$GITHUB_OUTPUT"
+          echo "affects_release=${affects}"
+
+      - name: Assert GCTA_VERSION is greater than latest semver tag
+        if: steps.changes.outputs.affects_release == 'true'
+        run: python3 scripts/ci/assert_version_bumped_vs_tags.py
+
+      - name: Assert CHANGELOG has section for GCTA_VERSION
+        if: steps.changes.outputs.affects_release == 'true'
+        run: python3 scripts/ci/assert_changelog_matches_version.py
+
+      - name: Skip version gate (no release-affecting changes)
+        if: steps.changes.outputs.affects_release != 'true'
+        run: echo "No release-affecting changes; version gate not required."

@@ -39,6 +39,15 @@ CPMAddPackage("gh:madler/zlib@1.3.1")
 CPMAddPackage("gh:eigen-mirror/eigen#3.4.0")
 CPMAddPackage("gh:yixuan/spectra@1.1.0")
 
+# Prefer a mostly-static gcta64 for portable CI/release artifacts (MKL+GSL+.a, not full musl).
+option(GCTA_STATIC_EXE "Statically link MKL/GSL/libgcc/libstdc++ into gcta64 where possible" OFF)
+
+if(GCTA_STATIC_EXE)
+    set(_zstd_shared OFF)
+else()
+    set(_zstd_shared ON)
+endif()
+
 CPMAddPackage(
     NAME zstd
     GITHUB_REPOSITORY facebook/zstd
@@ -48,7 +57,7 @@ CPMAddPackage(
     OPTIONS
     "ZSTD_BUILD_PROGRAMS OFF"
     "ZSTD_BUILD_TESTS OFF"
-    "ZSTD_BUILD_SHARED ON")
+    "ZSTD_BUILD_SHARED ${_zstd_shared}")
 
 CPMAddPackage(
     NAME Boost
@@ -95,6 +104,10 @@ if(LINUX)
     endif()
     set(MKL_INTERFACE "lp64")
     set(MKL_THREADING "gnu_thread")
+    if(GCTA_STATIC_EXE)
+        set(MKL_LINK "static")
+        message(STATUS "GCTA_STATIC_EXE: using MKL_LINK=static")
+    endif()
     find_package(MKL REQUIRED)
 endif()
 
@@ -165,6 +178,13 @@ if(NOT WIN32)
     targets_includes(GCTA_TARGETS ${GSL_INCLUDE_DIRS})
 endif()
 
+# OpenMP compile/link flags for all platforms (COJO Z fills, BED decode, etc.).
+target_link_libraries(gcta64 OpenMP::OpenMP_CXX)
+target_link_libraries(mainV1 OpenMP::OpenMP_CXX)
+foreach(gcta_lib ${GCTA_LIBS})
+    target_link_libraries(${gcta_lib} OpenMP::OpenMP_CXX)
+endforeach()
+
 if(APPLE)
     # For Eigen backend, OpenBLAS, LAPACK
     # Get macOS SDK path
@@ -177,12 +197,6 @@ if(APPLE)
 
     targets_includes(GCTA_TARGETS ${VECLIB_INCLUDE_DIR})
     targets_includes(GCTA_TARGETS ${OPENBLAS_INCLUDE_DIR})
-
-    target_link_libraries(gcta64 OpenMP::OpenMP_CXX)
-    target_link_libraries(mainV1 OpenMP::OpenMP_CXX)
-    foreach(gcta_lib ${GCTA_LIBS})
-        target_link_libraries(${gcta_lib} OpenMP::OpenMP_CXX)
-    endforeach()
 
     find_library(ACCELERATE_LIBRARY Accelerate)
     target_link_libraries(gcta64 ${ACCELERATE_LIBRARY})
@@ -200,19 +214,52 @@ target_include_directories(gcta64 PRIVATE
 
 target_include_directories(Pgenlib PRIVATE ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
 
-target_link_libraries(gcta64 mainV1 ${GCTA_LIBS} Pgenlib sqlite3 libzstd Threads::Threads zlib)
+target_link_libraries(gcta64 mainV1 ${GCTA_LIBS} Pgenlib sqlite3 Threads::Threads)
+
+if(GCTA_STATIC_EXE)
+    if(TARGET zlibstatic)
+        target_link_libraries(gcta64 zlibstatic)
+    else()
+        target_link_libraries(gcta64 zlib)
+    endif()
+    if(TARGET libzstd_static)
+        target_link_libraries(gcta64 libzstd_static)
+    else()
+        target_link_libraries(gcta64 libzstd)
+    endif()
+else()
+    target_link_libraries(gcta64 libzstd zlib)
+endif()
 
 if (NOT WIN32)
-    target_link_libraries(gcta64 GSL::gsl GSL::gslcblas)
+    if(GCTA_STATIC_EXE)
+        # Prefer static GSL archives so the CI artifact does not need libgsl.so.
+        find_library(GSL_STATIC NAMES libgsl.a PATHS ${GSL_ROOT_DIR}/lib /usr/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+        find_library(GSLCBLAS_STATIC NAMES libgslcblas.a PATHS ${GSL_ROOT_DIR}/lib /usr/lib /usr/lib/x86_64-linux-gnu REQUIRED)
+        target_link_libraries(gcta64 ${GSL_STATIC} ${GSLCBLAS_STATIC})
+        message(STATUS "GCTA_STATIC_EXE: linking ${GSL_STATIC} ${GSLCBLAS_STATIC}")
+    else()
+        target_link_libraries(gcta64 GSL::gsl GSL::gslcblas)
+    endif()
 endif()
 
 if (NOT APPLE)
     target_link_libraries(gcta64 MKL::MKL)
 endif()
 
-# Testing has some problems currently
-#enable_testing()
-#ADD_SUBDIRECTORY(test)
+if(GCTA_STATIC_EXE AND LINUX)
+    # Avoid shipping libgcc/libstdc++ .so with the binary; glibc/libgomp remain dynamic.
+    target_link_options(gcta64 PRIVATE -static-libgcc -static-libstdc++)
+    message(STATUS "GCTA_STATIC_EXE: enabling -static-libgcc -static-libstdc++")
+endif()
+
+# Unit / golden tests (see tests/ and .github/workflows/ci.yml).
+# Standalone unit build (no MKL): cmake -S tests -B build-unit && cmake --build build-unit && ctest --test-dir build-unit
+option(GCTA_BUILD_TESTS "Build and register GCTA/COJO tests" ON)
+if(GCTA_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
 
 IF(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/compile_commands.json")
     EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E copy_if_different

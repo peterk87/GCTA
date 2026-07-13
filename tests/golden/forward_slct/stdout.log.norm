@@ -1,0 +1,43 @@
+*******************************************************************
+* Genome-wide Complex Trait Analysis (GCTA)
+* version vX.Y.Z Linux
+* Built at Jul 13 2026 HH:MM:SS, by GCC X.Y
+* (C) 2010-present, Yang Lab, Westlake University
+* Please report bugs to Jian Yang <jian.yang@westlake.edu.cn>
+*******************************************************************
+
+Accepted options:
+--bfile data
+--cojo-file data.ma
+--cojo-forward
+--cojo-p 0.01
+--thread-num 1
+--maf 0.01
+--out OUTPREFIX
+
+
+Reading PLINK FAM file from [data.fam].
+400 individuals to be included from [data.fam].
+Reading PLINK BIM file from [data.bim].
+160 SNPs to be included from [data.bim].
+Reading PLINK BED file from [data.bed] in SNP-major format ...
+Genotype data for 400 individuals and 160 SNPs to be included from [data.bed].
+Calculating allele frequencies ...
+Filtering SNPs with MAF > 0.01 ...
+After filtering SNPs with MAF > 0.01, there are 160 SNPs (0 SNPs with MAF < 0.01).
+
+Reading GWAS summary-level statistics from [data.ma] ...
+GWAS summary statistics of 160 SNPs read from [data.ma].
+Phenotypic variance estimated from summary statistics of all 160 SNPs: 0.945433 (variance of logit for case-control studies).
+Matching the GWAS meta-analysis results to the genotype data ...
+160 SNPs are matched to the genotype data.
+Calculating the variance of SNP genotypes ...
+
+Performing forward model selection on 160 SNPs to select association signals ... (p cutoff = 0.01; collinearity cutoff = 0.9)
+(Assuming complete linkage equilibrium between SNPs which are more than 10Mb away from each other)
+5 associated SNPs have been selected.
+Performing backward elimination...
+Finally, 5 associated SNPs are selected.
+Performing joint analysis on all the 5 selected signals ...
+(0 SNPs eliminated by backward selection and 0 SNPs filtered by collinearity test are not included in the output)
+

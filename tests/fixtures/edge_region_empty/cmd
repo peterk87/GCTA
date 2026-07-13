@@ -1,0 +1,1 @@
+--bfile data --cojo-file data.ma --cojo-slct --thread-num 1 --extract-region-bp 1 1 1000

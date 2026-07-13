@@ -1,0 +1,71 @@
+# Prek / pre-commit hooks for GCTA.
+# Install:  prek install
+# Run all:  prek run --all-files
+#
+# Hooks are pinned by git commit SHA (immutable). Version tags are comments only.
+# (pwcoco does not ship a pre-commit config; this follows common C++ + fiveprime-style pins.)
+
+exclude: |
+  (?x)^(
+      third_party/
+    | sandbox/
+    | gs:/
+    | \.cpm-cache/
+    | .*[Bb]uild.*/
+    | tests/fixtures/.*\.(bed|bim|fam|bgen|pgen|pvar|psam)$
+  )
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    # v6.0.0 — https://github.com/pre-commit/pre-commit-hooks/commit/3e8a8703264a2f4a69428a0aa4dcb512790b2c8c
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.(tsv|txt|csv|md|cojo|ma|norm)$
+      - id: end-of-file-fixer
+        exclude: \.(tsv|txt|csv|md|cojo|ma|norm|bed|bim|fam)$
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    # v22.1.8 — https://github.com/pre-commit/mirrors-clang-format/commit/f4d7745e17a28aad7eed2f4874ca8d1568c11c4c
+    rev: f4d7745e17a28aad7eed2f4874ca8d1568c11c4c
+    hooks:
+      - id: clang-format
+        # Only first-party sources; third_party/ is excluded globally above.
+        files: ^(main|src|include|tests)/.*\.(c|cc|cpp|cxx|h|hpp|hh)$
+        types_or: [c++, c, header]
+        args: [-style=file, -fallback-style=none]
+
+  - repo: https://github.com/cheshirekow/cmake-format-precommit
+    # v0.6.13 — https://github.com/cheshirekow/cmake-format-precommit/commit/e2c2116d86a80e72e7146a06e68b7c228afc6319
+    rev: e2c2116d86a80e72e7146a06e68b7c228afc6319
+    hooks:
+      - id: cmake-format
+        files: ^(CMakeLists\.txt|cmake/.*\.cmake|tests/CMakeLists\.txt)$
+        additional_dependencies: [pyyaml]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    # v0.11.0.1 — https://github.com/shellcheck-py/shellcheck-py/commit/745eface02aef23e168a8afb6b5737818efbea95
+    rev: 745eface02aef23e168a8afb6b5737818efbea95
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+        files: ^scripts/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # v0.14.11 — https://github.com/astral-sh/ruff-pre-commit/commit/6ce4b4fc349b8881cbce40207dac3bf78824a88e
+    rev: 6ce4b4fc349b8881cbce40207dac3bf78824a88e
+    hooks:
+      - id: ruff-check
+        files: ^scripts/
+        types_or: [python, pyi]
+        args: [--fix]
+      - id: ruff-format
+        files: ^scripts/
+        types_or: [python, pyi]

@@ -1,1 +1,1 @@
-#define GCTA_VERSION "v1.95.3"
+#define GCTA_VERSION "v1.96.0"

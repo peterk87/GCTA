@@ -3,7 +3,12 @@
 !.gitignore
 !.gitmodules
 !.gitattributes
+!.github/
+!.github/**
 !.opencode/
+!.pre-commit-config.yaml
+!.clang-format
+!.cmake-format.yaml
 compile_commands.json
 *[Bb]uild*/
 *[Rr]elease*/
@@ -30,3 +35,12 @@ compile_commands.json
 *.db
 *.tar
 *.zip
+
+sandbox/
+
+*.pyc
+.pytest_cache/
+.DS_Store
+.cursor/
+.vscode/
+.idea/

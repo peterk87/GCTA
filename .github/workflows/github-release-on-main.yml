@@ -1,0 +1,185 @@
+name: Tag and GitHub release
+
+# On merge to main: tag from GCTA_VERSION, publish a GitHub Release whose notes
+# combine CHANGELOG.md + GitHub auto-generated notes, and attach mostly-static
+# Linux binaries (stripped+debuglink, detached .debug, and UPX-compressed).
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-release-main
+  cancel-in-progress: false
+
+env:
+  CPM_SOURCE_CACHE: ${{ github.workspace }}/.cpm-cache
+
+jobs:
+  build-static-release:
+    name: Build static release binaries
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Read GCTA_VERSION
+        id: ver
+        run: |
+          VERSION="$(python3 scripts/ci/gcta_version.py)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libgsl-dev gfortran wget ca-certificates gnupg \
+            binutils upx-ucl
+
+      - name: Install Intel oneAPI MKL
+        run: |
+          wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+            | sudo tee /etc/apt/sources.list.d/oneAPI.list
+          sudo apt-get update
+          sudo apt-get install -y intel-oneapi-mkl-devel
+
+      - name: Cache CPM packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CPM_SOURCE_CACHE }}
+          key: cpm-build-static-${{ runner.os }}-${{ hashFiles('cmake/CPM.cmake', 'CMakeLists.txt') }}
+          restore-keys: |
+            cpm-build-static-${{ runner.os }}-
+            cpm-build-${{ runner.os }}-
+
+      - name: Configure static gcta64
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          cmake -S . -B build-static -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGCTA_STATIC_EXE=ON \
+            -DGCTA_BUILD_TESTS=OFF \
+            -DMKL_DIR="/opt/intel/oneapi/mkl/latest/lib/cmake/mkl" \
+            -DCPM_SOURCE_CACHE="${CPM_SOURCE_CACHE}"
+
+      - name: Build static gcta64
+        run: |
+          # shellcheck source=/dev/null
+          source /opt/intel/oneapi/setvars.sh
+          cmake --build build-static --parallel --target gcta64
+
+      - name: Package release variants (strip + debuglink + UPX)
+        run: |
+          chmod +x scripts/ci/package_static_release.sh
+          scripts/ci/package_static_release.sh \
+            --bin build-static/gcta64 \
+            --outdir release-dist \
+            --version "${{ steps.ver.outputs.version }}" \
+            --commit "${{ github.sha }}"
+          # Smoke both non-UPX and UPX binaries (decomp not needed; UPX self-extracts).
+          ./release-dist/gcta64-${{ steps.ver.outputs.version }}-linux-x86_64 2>&1 | head -20 || true
+          ./release-dist/gcta64-${{ steps.ver.outputs.version }}-linux-x86_64.upx 2>&1 | head -20 || true
+
+      - name: Upload release-dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcta64-release-dist
+          path: release-dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  tag-and-release:
+    name: Tag and GitHub release
+    needs: build-static-release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download release binaries
+        uses: actions/download-artifact@v8
+        with:
+          name: gcta64-release-dist
+          path: release-dist
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create tag and push (if missing)
+        id: tag_push
+        env:
+          TAG: ${{ needs.build-static-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin
+          pushed=false
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            existing="$(git rev-parse "$TAG")"
+            head="$(git rev-parse HEAD)"
+            if [ "$existing" = "$head" ]; then
+              echo "Tag $TAG already points at HEAD; skipping tag push."
+            else
+              echo "::error::Tag $TAG already exists at $existing but HEAD is $head. Bump GCTA_VERSION in src/config.h."
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            pushed=true
+          fi
+          echo "pushed=${pushed}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release (if missing)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-static-release.outputs.tag }}
+          VERSION: ${{ needs.build-static-release.outputs.version }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release for $TAG already exists; ensuring assets are uploaded."
+          else
+            GEN="$(mktemp)"
+            FINAL="$(mktemp)"
+            trap 'rm -f "$GEN" "$FINAL"' EXIT
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f "tag_name=${TAG}" \
+              --jq .body > "$GEN"
+            python3 scripts/ci/merge_github_release_notes.py \
+              --release-version "$VERSION" \
+              --generated "$GEN" \
+              --output "$FINAL" \
+              --require-changelog-section
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --notes-file "$FINAL"
+          fi
+          # Attach binaries (idempotent: clobber if re-run).
+          gh release upload "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            release-dist/gcta64-"${VERSION}"-linux-x86_64 \
+            release-dist/gcta64-"${VERSION}"-linux-x86_64.debug \
+            release-dist/gcta64-"${VERSION}"-linux-x86_64.upx \
+            release-dist/SHA256SUMS \
+            release-dist/README.txt
