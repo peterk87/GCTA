@@ -88,7 +88,8 @@ normalize() {
     -e 's#--out[[:space:]]+[^[:space:]]+#--out OUTPREFIX#g' \
     -e 's#\[[^]]+/([^/]+\.(cojo|ma|bed|bim|fam|badsnps))\]#[\1]#g' \
     -e 's#/[^ ]*/([^/ ]+\.(cojo|ma|bed|bim|fam|badsnps))#\1#g' \
-    -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}/HH:MM:SS/g'
+    -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}/HH:MM:SS/g' \
+    -e 's/(by GCC )[0-9]+\.[0-9]+/\1X.Y/g'
 }
 
 fail=0

@@ -48,6 +48,7 @@ Work on branch `dev` (fork [`peterk87/GCTA`](https://github.com/peterk87/GCTA)),
 - Legacy `option()` path never called `omp_set_num_threads`, so `#pragma omp` in COJO Z fills was a no-op even when `--thread-num` was set.
 - CI / CTest primary golden gate uses `--tol 1e-6`; exact byte mode kept as `cojo_golden_exact`.
 - CI lint no longer py_compiles gitignored `sandbox/` scripts; golden tests run against the mostly-static `gcta64` artifact (avoids MKL/GSL shared-library version skew between jobs).
+- Golden stdout normalizer masks GCC version (`by GCC X.Y`) so CI (GCC 13) matches goldens blessed on other compilers.
 
 ---
 
