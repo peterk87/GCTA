@@ -84,11 +84,14 @@ normalize() {
     -e '/^COJO deferred genotype load:/d' \
     -e '/^Deferred genotype load for COJO:/d' \
     -e '/^Deferred COJO:/d' \
+    -e '/^COJO profile:/d' \
+    -e '/^COJO profile written to /d' \
     -e '/Saving .* to \[/d' \
     -e 's#--out[[:space:]]+[^[:space:]]+#--out OUTPREFIX#g' \
     -e 's#\[[^]]+/([^/]+\.(cojo|ma|bed|bim|fam|badsnps))\]#[\1]#g' \
     -e 's#/[^ ]*/([^/ ]+\.(cojo|ma|bed|bim|fam|badsnps))#\1#g' \
     -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}/HH:MM:SS/g' \
+    -e 's/(\* Built at )[A-Za-z]+ [0-9]+ [0-9]+/\1MON DD YYYY/g' \
     -e 's/(by GCC )[0-9]+\.[0-9]+/\1X.Y/g' \
     -e 's/(\* version v)[0-9]+\.[0-9]+\.[0-9]+/\1X.Y.Z/g'
 }

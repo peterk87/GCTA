@@ -16,7 +16,34 @@ Git tags were not present upstream at the time this file was created; compare UR
 
 ## [Unreleased]
 
-Nothing yet (changes for this cycle land under **1.96.0** until that tag ships).
+Nothing yet.
+
+---
+
+## [1.96.1] - 2026-07-15
+
+### Performance
+
+Further COJO stepwise speedups on high-signal / dense-LD chromosomes, plus faster BIM load/index for large panels (math-neutral vs `1.96.0` SNP sets @ `--tol 1e-6`).
+
+Illustrative full-chromosome `--cojo-slct` (4 threads; same host/inputs as the `1.96.0` baseline runs):
+
+| Workload | GCTA `1.96.0` | This release (`1.96.1`) | Approx. Δ |
+|----------|--------------:|------------------------:|----------:|
+| Full-chr `--cojo-slct` (chr1; ~714k matched, 302 signals) | ~55.1 min wall · ~10.7 GiB peak RSS | ~16.5 min · ~13.2 GiB | **~3.35×** faster wall; identical `.jma` @ 1e-6 |
+| Full-chr `--cojo-slct` (chr2; ~8.07M BIM rows → 778k matched, 141 signals) | ~9.4 min · ~7.3 GiB | ~3.6 min · ~8.2 GiB | **~2.6×** faster wall; identical `.jma` @ 1e-6 |
+| BIM read + SNP-ID index alone (chr2 panel) | ~81 s to first BED I/O | ~20 s | **~4×** faster preload |
+
+### Changed
+
+- **PLINK BIM I/O:** buffered line parse (`getline` + `strtol`/`strtod`), vector `reserve` from file size, and a larger iostream buffer — replaces per-field `operator>>` for multi-million-SNP panels.
+- **SNP name index:** `_snp_name_map` is an `unordered_map` (`SnpNameMap`); `update_id_map_kp` builds the keep-set without copying the full map first.
+- **COJO `massoc_cond`:** OpenMP over remaining SNPs; precompute `v_bc = B_N_i (D_N ∘ b)` once per step; skip all-zero Z columns via `_Z_col_has_nz`. `StatFunc::pchisq` / `dcdflib` run **serially** after the parallel loop (`dcdflib` uses file-scope statics and is not thread-safe).
+- **COJO threading:** `Eigen::setNbThreads(1)` and `omp_set_max_active_levels(1)` at `--cojo-slct` start so nested Eigen/BLAS reductions cannot reshuffle LD / conditional-p floating point under OpenMP outer loops.
+- **COJO insert guards:** check per-SNP collinearity **before** `SimplicialLDLT` on the incremental path (same three logical guards; skips factorization on the common reject case).
+- **COJO Z cache:** geometric row capacity growth (`_Z_nrows` + `head(k)` views) to avoid full `k×m` realloc every accepted insert.
+- **COJO profiling:** log + `{out}.cojo_timing.tsv` with `massoc_cond` / `insert_ok` / `insert_reject` / `slct_stay` wall and counts.
+- **Golden harness:** strip `COJO profile` lines; normalize `* Built at` calendar date so goldens survive rebuild days.
 
 ---
 
@@ -853,7 +880,8 @@ The v1.94.1 figure is end-to-end wall for subsetted COJO (including orchestratio
 
 ---
 
-[Unreleased]: https://github.com/peterk87/GCTA/compare/v1.96.0...HEAD
+[Unreleased]: https://github.com/peterk87/GCTA/compare/v1.96.1...HEAD
+[1.96.1]: https://github.com/peterk87/GCTA/compare/v1.96.0...v1.96.1
 [1.96.0]: https://github.com/peterk87/GCTA/compare/0dc78f0...v1.96.0
 [1.95.3]: https://github.com/JianYang-Lab/GCTA/compare/4ee76be...0dc78f0
 [1.95.2]: https://github.com/JianYang-Lab/GCTA/compare/69d42e2...4ee76be
